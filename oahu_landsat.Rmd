@@ -1,3 +1,127 @@
+<<<<<<< HEAD
+---
+title: "Clean Raw Landsat"
+author: "Madeline Berger"
+date: "2025-07-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# load packages 
+
+library(terra)
+library(tidyverse)
+library(here) # I use this to easily create relative file paths
+
+# set file path to data folder 
+
+oahu_raw_data <- here("low_resolution/oahu")
+
+
+```
+
+Read in one raster and convert to data frame (as an example)
+
+```{r}
+
+first_rast <- terra::rast(file.path(oahu_raw_data,"Oahu_2014_LS8_composite_low_resolution.tif")) #read in the tif file as a SpatRaster using terra
+
+first_rast # get summary of whats in the raster
+
+nlyr(first_rast) # there are the bands
+
+# what happens when we run as data frame
+
+
+first_df <- as.data.frame(first_rast, xy = T)
+
+
+```
+
+Loop to read in each raster and convert to data frame. The steps will:
+- run through each file and read it in as a Spat Raster
+- create a df of each
+- save each one in a list with a new column for year
+
+```{r}
+
+# list each landsat raster
+
+tif_files <- list.files(oahu_raw_data,
+                        pattern = ".tif")
+
+# create empty list
+
+df_list <- list()
+
+for (i in 1:length(tif_files)){
+  
+  # for testing
+ # i = 1
+  
+  # file name
+  f = tif_files[i]
+  
+  # get year from file name
+  year = substr(f,6,9)
+  
+  # read in raster
+  rast = terra::rast(file.path(oahu_raw_data,f))
+  
+  # convert to df, add column with year
+  
+  df <- as.data.frame(rast, xy = T) %>% mutate(image_year = rep(year, nrow(.)))
+  
+  # save to list 
+
+  df_list[[i]] <- df
+  
+}
+
+
+# now we have a list of dfs for each year 
+
+```
+
+```{r}
+#adding NDVI variable to df, hopefully to target vegetative/agricultural land
+
+NDVI_df <- df %>%
+  mutate(NDVI = (SR_B5 - SR_B4) / (SR_B5 + SR_B4))
+
+# Data is already clean
+#clean_NDVI_df <- NDVI_df %>%
+  #filter(is.finite(NDVI), NDVI >= -1, NDVI <= 1)
+```
+```{r}
+#kmeans
+set.seed(123)
+km_result <- kmeans(NDVI_df [, c("x","y",)], 10, iter.max = 10)
+NDVI_df$cluster <- as.factor(km_result$cluster)
+
+ggplot(NDVI_df, aes(x = x, y = y, color = cluster)) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  coord_fixed(ratio = 1.3) +  # keeps map proportion realistic
+  theme_minimal() +
+  scale_color_brewer(palette = "Set1")
+```
+
+```{r}
+#visualizing high NDVI values for a specific year
+#NDVI_df_2024 <- NDVI_df %>%
+  #filter(image_year == 2024)
+NDVI_max <- max(NDVI_df$NDVI, na.rm = TRUE)
+NDVI_max
+NDVI_min <- min(NDVI_df$NDVI, na.rm = TRUE)
+NDVI_min
+ggplot(NDVI_df, mapping = aes(x = x, y = y, fill = NDVI)) + geom_tile() + scale_fill_viridis()
+
+```
+
+
+=======
 ---
 title: "Clean Raw Landsat"
 author: "Madeline Berger"
@@ -113,3 +237,4 @@ Adding draft clusters with k-means clustering
 ```
 
 
+>>>>>>> main
