@@ -1,0 +1,72 @@
+
+---
+title: "Clean Raw ARCGIS"
+author: "Sakura Takahashi"
+date: "2025-07-30"
+output: html_document
+---
+
+## THE AG LAND CODESSSSS  
+- 32 shrub & bush rangeland  
+- 21 cropland and pasture  
+- 33 mixed rangeland  
+- 31 herbaceous rangeland  
+- 24 other ag land
+---
+
+```{r}
+# load packages
+library(sf)
+library(terra)
+library(readr)
+library(dplyr)
+library(raster)
+
+# GeoJSON path to LULC file (SAKURA"S FILE PATH SPECFICIALLY)
+lulc_sf <- st_read("C:/Users/1saku/Desktop/Mega Code/SciML/land_Use_Land_Cover_(LULC).geojson")
+
+# CRS to match raster
+lulc_sf <- st_transform(lulc_sf, crs = st_crs(first_rast))
+lulc_vect <- vect(lulc_sf)
+
+# rasterize the zones using the first raster 
+landcover_rast <- rasterize(lulc_vect, first_rast, field = "landcover")
+
+# ag codes
+ag_codes <- c(21, 24, 31, 32, 33)
+
+# ag use mask
+agriculture_mask <- classify(landcover_rast, rcl = matrix(c(-Inf, Inf, NA), ncol = 3))
+agriculture_mask[landcover_rast %in% ag_codes] <- 1
+agriculture_mask[!(landcover_rast %in% ag_codes)] <- 0
+
+# ag df (only geojson file)
+ag_df <- as.data.frame(agriculture_mask, xy = TRUE, na.rm = TRUE)
+names(ag_df)[3] <- "agriculture"
+ag_df$agriculture <- ifelse(ag_df$agriculture == 1, "Yes", "No")
+
+# WILL THIS WORK (run this to check)
+# unique(lulc_sf$landcover)
+
+```
+
+
+```{r}
+# combine ag data with the raster data for 2014
+first_df_with_ag <- first_df %>%
+  left_join(ag_df, by = c("x", "y")) 
+
+# add ag column to each year's df in df_list
+for (i in 1:length(df_list)) {
+  df_list[[i]] <- df_list[[i]] %>%
+    left_join(ag_df, by = c("x", "y"))
+}
+```
+
+```{r}
+# combine all df into megadf
+all_years_df <- dplyr::bind_rows(df_list) 
+
+# use this to check 
+# head(all_years_df)
+```
