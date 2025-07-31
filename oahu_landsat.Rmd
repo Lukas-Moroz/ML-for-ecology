@@ -51,6 +51,9 @@ Loop to read in each raster and convert to data frame. The steps will:
 - create a df of each
 - save each one in a list with a new column for year
 
+Understanding the df: x and y are the location coordinates, SR_B# is the visual band
+- Updating the df band number column names to be human readable
+
 ```{r}
 
 # list each landsat raster
@@ -80,6 +83,16 @@ for (i in 1:length(tif_files)){
   
   df <- as.data.frame(rast, xy = T) %>% mutate(image_year = rep(year, nrow(.)))
   
+  # rename band numbers to the human readable name
+  df <- df %>%
+    rename(Coastal_Aerosol = SR_B1,
+           Blue = SR_B2,
+           Green = SR_B3,
+           Red = SR_B4,
+           Near_Infrared = SR_B5,
+           Shortwave_Infrared_1= SR_B6,
+           Shortwave_Infrared_2= SR_B7)
+  
   # save to list 
 
   df_list[[i]] <- df
@@ -91,20 +104,11 @@ for (i in 1:length(tif_files)){
 
 ```
 
-Understanding the df: x and y are the location coordinates, SR_B# is the visual band
-Updating the df band number column names to be human readable
+Adding draft clusters with k-means clustering
 
 ```{r}
 
-# Rename specific columns
-  df <- df %>%
-    rename(Coastal_Aerosol = SR_B1,
-           Blue = SR_B2,
-           Green = SR_B3,
-           Red = SR_B4,
-           Near_Infrared = SR_B5,
-           Shortwave_Infrared_1= SR_B6,
-           Shortwave_Infrared_2= SR_B7)
+# 
 
 ```
 
