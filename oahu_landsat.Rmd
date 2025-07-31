@@ -97,14 +97,14 @@ NDVI_df <- df %>%
 ```{r}
 #kmeans
 set.seed(123)
-km_result <- kmeans(NDVI_df [, c("x","y")], 10, iter.max = 10)
+km_result <- kmeans(NDVI_df [, c("x","y",)], 10, iter.max = 10)
 NDVI_df$cluster <- as.factor(km_result$cluster)
 
-#ggplot(NDVI_df, aes(x = lon, y = lat, color = cluster)) +
-  #geom_point(size = 2.5, alpha = 0.8) +
-  #coord_fixed(ratio = 1.3) +  # keeps map proportion realistic
-  #theme_minimal() +
-  #scale_color_brewer(palette = "Set1")
+ggplot(NDVI_df, aes(x = x, y = y, color = cluster)) +
+  geom_point(size = 2.5, alpha = 0.8) +
+  coord_fixed(ratio = 1.3) +  # keeps map proportion realistic
+  theme_minimal() +
+  scale_color_brewer(palette = "Set1")
 ```
 
 ```{r}
