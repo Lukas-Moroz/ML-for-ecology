@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 ---
 title: "Clean Raw Landsat"
 author: "Madeline Berger"
@@ -120,3 +121,120 @@ ggplot(NDVI_df, mapping = aes(x = x, y = y, fill = NDVI)) + geom_tile() + scale_
 ```
 
 
+=======
+---
+title: "Clean Raw Landsat"
+author: "Madeline Berger"
+date: "2025-07-30"
+output: html_document
+
+updated by Alana Wesly
+07/30/2025
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# load packages 
+
+library(terra)
+library(tidyverse)
+library(here) # I use this to easily create relative file paths
+
+# added to update column names
+
+library(dplyr) # Load dplyr
+
+# set file path to data folder 
+
+oahu_raw_data <- here("low_resolution/oahu")
+
+
+```
+
+Read in one raster and convert to data frame (as an example)
+
+```{r}
+
+first_rast <- terra::rast(file.path(oahu_raw_data,"Oahu_2014_LS8_composite_low_resolution.tif")) #read in the tif file as a SpatRaster using terra
+
+first_rast # get summary of whats in the raster
+
+nlyr(first_rast) # there are the bands
+
+# what happens when we run as data frame
+
+
+first_df <- as.data.frame(first_rast, xy = T)
+
+
+```
+
+Loop to read in each raster and convert to data frame. The steps will:
+- run through each file and read it in as a Spat Raster
+- create a df of each
+- save each one in a list with a new column for year
+
+Understanding the df: x and y are the location coordinates, SR_B# is the visual band
+- Updating the df band number column names to be human readable
+
+```{r}
+
+# list each landsat raster
+
+tif_files <- list.files(oahu_raw_data,
+                        pattern = ".tif")
+
+# create empty list
+
+df_list <- list()
+
+for (i in 1:length(tif_files)){
+  
+  # for testing
+ # i = 1
+  
+  # file name
+  f = tif_files[i]
+  
+  # get year from file name
+  year = substr(f,6,9)
+  
+  # read in raster
+  rast = terra::rast(file.path(oahu_raw_data,f))
+  
+  # convert to df, add column with year
+  
+  df <- as.data.frame(rast, xy = T) %>% mutate(image_year = rep(year, nrow(.)))
+  
+  # rename band numbers to the human readable name
+  df <- df %>%
+    rename(Coastal_Aerosol = SR_B1,
+           Blue = SR_B2,
+           Green = SR_B3,
+           Red = SR_B4,
+           Near_Infrared = SR_B5,
+           Shortwave_Infrared_1= SR_B6,
+           Shortwave_Infrared_2= SR_B7)
+  
+  # save to list 
+
+  df_list[[i]] <- df
+  
+}
+
+
+# now we have a list of dfs for each year 
+
+```
+
+Adding draft clusters with k-means clustering
+
+```{r}
+
+# 
+
+```
+
+
+>>>>>>> main
