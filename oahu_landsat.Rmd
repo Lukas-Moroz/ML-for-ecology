@@ -1,8 +1,12 @@
+=======
 ---
 title: "Clean Raw Landsat"
 author: "Madeline Berger"
 date: "2025-07-30"
 output: html_document
+
+updated by Alana Wesly
+07/30/2025
 ---
 
 ```{r setup, include=FALSE}
@@ -13,6 +17,15 @@ knitr::opts_chunk$set(echo = TRUE)
 library(terra)
 library(tidyverse)
 library(here) # I use this to easily create relative file paths
+
+# added to update column names
+
+library(dplyr) # Load dplyr
+
+# added for cluster visualization
+
+library(ggplot2)
+library(ggpubr) # For stat_ellipse
 
 # set file path to data folder 
 
@@ -44,6 +57,9 @@ Loop to read in each raster and convert to data frame. The steps will:
 - create a df of each
 - save each one in a list with a new column for year
 
+Understanding the df: x and y are the location coordinates, SR_B# is the visual band
+- Updating the df band number column names to be human readable
+
 ```{r}
 
 # list each landsat raster
@@ -73,6 +89,16 @@ for (i in 1:length(tif_files)){
   
   df <- as.data.frame(rast, xy = T) %>% mutate(image_year = rep(year, nrow(.)))
   
+  # rename band numbers to the human readable name
+  df <- df %>%
+    rename(Coastal_Aerosol = SR_B1,
+           Blue = SR_B2,
+           Green = SR_B3,
+           Red = SR_B4,
+           Near_Infrared = SR_B5,
+           Shortwave_Infrared_1= SR_B6,
+           Shortwave_Infrared_2= SR_B7)
+  
   # save to list 
 
   df_list[[i]] <- df
@@ -81,6 +107,106 @@ for (i in 1:length(tif_files)){
 
 
 # now we have a list of dfs for each year 
+
+
+```
+Find clusters with k-means clustering for whole group and then seperate into years 
+
+```{r}
+# Set seed for consistency
+set.seed(123)
+
+# Combine all data for clustering
+combined_df <- do.call(rbind, df_list)
+
+# Extract numeric columns and scale
+df_numeric_all <- scale(combined_df[, !names(combined_df) %in% c("x", "y", "image_year")])
+
+# Run k-means on all data together
+kmeans_all <- kmeans(df_numeric_all, centers = 5, nstart = 20, iter.max = 100)
+
+# Add cluster assignments back to combined data
+combined_df$cluster <- kmeans_all$cluster
+
+# Split back into individual years
+df_list_new <- split(combined_df, combined_df$image_year)
+
+# Convert back to list format matching original structure
+df_list <- lapply(names(df_list_new), function(year) {
+  df_list_new[[year]]
+})
+
+# Print cluster distributions for each year
+for (i in seq_along(df_list)) {
+  year <- unique(df_list[[i]]$image_year)
+  cat("Year", year, "cluster distribution:\n")
+  print(table(df_list[[i]]$cluster))
+}
+```
+
+Visualize the color coded clusters by year with ggplot2
+
+```{r}
+# First, check what clusters exist across all years
+all_clusters <- unique(unlist(lapply(df_list, function(df) unique(df$cluster))))
+cat("Clusters found across all years:", sort(all_clusters), "\n")
+
+# Define colors for all possible clusters
+cluster_colors <- c("1" = "#ccdb41", "2" = "#4ebcff", "3" = "#a4d280", 
+                    "4" = "#78c7c1", "5" = "#f7e501")
+
+cluster_plots <- list()
+
+for (i in seq_along(df_list)) {
+  year <- unique(df_list[[i]]$image_year)
+  
+  # Ensure cluster column is a factor with all levels
+  df_list[[i]]$cluster <- factor(df_list[[i]]$cluster, levels = 1:5)
+  
+  cluster_plots[[i]] <- ggplot(df_list[[i]], aes(x = x, y = y, color = cluster)) +
+    geom_point(size = 0.5, alpha = 0.7) +
+    scale_color_manual(name = "Cluster", 
+                       values = cluster_colors,
+                       breaks = factor(1:5),
+                       drop = FALSE) +  # Keep all levels even if not present
+    labs(title = paste("K-means Clusters -", year),
+         x = "Longitude", 
+         y = "Latitude") +
+    theme_minimal() +
+    theme(axis.text = element_text(size = 8),
+          plot.title = element_text(size = 12, hjust = 0.5)) +
+    coord_fixed(ratio = 1)
+  
+  print(cluster_plots[[i]])
+}
+
+```
+
+Visualize the combined plots with ggplot2
+
+```{r}
+
+# Check if combined_df exists and has cluster column
+if (!exists("combined_df") || !"cluster" %in% names(combined_df)) {
+  # Recreate combined_df if needed
+  combined_df <- do.call(rbind, df_list)
+}
+
+# Visualize the combined plots with ggplot2
+combined_plot <- ggplot(combined_df, aes(x = x, y = y, color = factor(cluster))) +
+  geom_point(size = 0.3, alpha = 0.6) +
+  scale_color_viridis_d(name = "Cluster") +
+  labs(title = "K-means Clusters - All Years Combined",
+       subtitle = paste("Years:", paste(sort(unique(combined_df$image_year)), collapse = ", ")),
+       x = "Longitude", 
+       y = "Latitude") +
+  theme_minimal() +
+  theme(axis.text = element_text(size = 8),
+        plot.title = element_text(size = 14, hjust = 0.5),
+        plot.subtitle = element_text(size = 10, hjust = 0.5)) +
+  coord_fixed(ratio = 1)
+
+print(combined_plot)
 
 ```
 
