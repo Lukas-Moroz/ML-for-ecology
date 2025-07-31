@@ -84,3 +84,27 @@ for (i in 1:length(tif_files)){
 
 ```
 
+```{r}
+#adding NDVI variable to df, hopefully to target vegetative/agricultural land
+
+NDVI_df <- df %>%
+  mutate(NDVI = (SR_B5 - SR_B4) / (SR_B5 + SR_B4))
+
+# Data is already clean
+#clean_NDVI_df <- NDVI_df %>%
+  #filter(is.finite(NDVI), NDVI >= -1, NDVI <= 1)
+```
+```{r}
+#kmeans
+set.seed(123)
+
+
+```
+```{r}
+#visualizing high NDVI values for a specific year
+#NDVI_df_2024 <- NDVI_df %>%
+  #filter(image_year == 2024)
+ggplot(NDVI_df, mapping = aes(x = x, y = y, fill = NDVI)) + geom_tile() + scale_fill_viridis()
+```
+
+
