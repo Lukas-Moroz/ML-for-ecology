@@ -97,7 +97,7 @@ Updating the df band number column names to be human readable
 ```{r}
 
 # Rename specific columns
-  first_df <- first_df %>%
+  df <- df %>%
     rename(Coastal_Aerosol = SR_B1,
            Blue = SR_B2,
            Green = SR_B3,
