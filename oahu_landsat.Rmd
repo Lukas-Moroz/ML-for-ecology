@@ -11,7 +11,8 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # load packages 
 
-library(terra)
+library(terra) # for rasters
+library(sf) # for vector data
 library(tidyverse)
 library(here) # I use this to easily create relative file paths
 
@@ -19,12 +20,15 @@ library(here) # I use this to easily create relative file paths
 
 oahu_raw_data <- here("low_resolution/oahu")
 
+zoning <- here("low_resolution/honolulu_zoning")
+
 
 ```
 
-Read in one raster and convert to data frame (as an example)
+Read in one raster and convert to data frame (as an example). Read in and look at zoning shapefile
 
 ```{r}
+
 
 first_rast <- terra::rast(file.path(oahu_raw_data,"Oahu_2014_LS8_composite_low_resolution.tif")) #read in the tif file as a SpatRaster using terra
 
@@ -37,8 +41,57 @@ nlyr(first_rast) # there are the bands
 
 first_df <- as.data.frame(first_rast, xy = T)
 
+#read in zoning
+
+zones_raw <- read_sf(file.path(zoning,"Zoning.shp"))
+
+# quick visualize
+library(mapview)
+
+mapview(zones_raw, zcol = "zone_class")
+
 
 ```
+
+Convert shapefiles to raster using the "zones_class" 
+
+```{r}
+
+st_crs(zones_raw) #hi zone 3 
+
+# convert to match raster
+
+zones_wgs84 <- st_transform(zones_raw, crs = crs(first_rast))
+
+# create raster template from landsat raster
+r_temp <- rast(first_rast)
+
+zones_rast <- rasterize(zones_wgs84, r_temp, field = "zone_class")
+
+
+plot(zones_rast)
+
+# make sure its origin and extent are aligned with landsat rasters 
+
+
+ext_landsat <- ext(first_rast)
+ext_zones <- ext(zones_rast)
+
+origin_landsat <- origin(first_rast)
+origin_zones <- origin(zones_rast)
+
+
+res(first_rast) == res(zones_rast) # check if true
+
+# convert zones rast to df to join to land use df
+
+zones_rast_df <- as.data.frame(zones_rast, xy = T)
+
+```
+
+
+
+
 
 Loop to read in each raster and convert to data frame. The steps will:
 - run through each file and read it in as a Spat Raster
@@ -59,7 +112,7 @@ df_list <- list()
 for (i in 1:length(tif_files)){
   
   # for testing
- # i = 1
+  #i = 1
   
   # file name
   f = tif_files[i]
@@ -74,14 +127,23 @@ for (i in 1:length(tif_files)){
   
   df <- as.data.frame(rast, xy = T) %>% mutate(image_year = rep(year, nrow(.)))
   
+  df_with_zones <- left_join(df, zones_rast_df, by = c("x","y")) %>% 
+    filter(!is.na(zone_class))
+  
   # save to list 
 
-  df_list[[i]] <- df
+  df_list[[i]] <- df_with_zones
   
 }
 
 
-# now we have a list of dfs for each year 
+# now we have a list of dfs with band values, year and the zone it falls into for each pixel
+
+
+# for visulizaing if this work 
+df_zones_sf <- st_as_sf(df_with_zones, coords = c("x","y"))
+
+plot(df_zones_sf)
 
 ```
 
