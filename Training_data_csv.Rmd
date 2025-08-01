@@ -1,0 +1,211 @@
+# TIFF Data Processing for Oahu Agricultural Land Use Classification
+# ==================================================================
+```{r}
+# Run this code to create your training and testing datasets
+# Make sure you have your "oahu_landsat_with_agriculture.csv" file first!
+
+library(dplyr)
+library(caret)
+library(ggplot2)
+
+# =======================================================
+# 1. LOAD YOUR CLEANED DATA
+# =======================================================
+
+# Load the data you created from your cleaning script
+all_landsat <- read.csv("oahu_landsat_with_agriculture.csv")
+
+cat("Loaded data with", nrow(all_landsat), "rows and", ncol(all_landsat), "columns\n")
+cat("Agriculture distribution:\n")
+print(table(all_landsat$agriculture))
+
+# =======================================================
+# 2. ADD SPECTRAL INDICES
+# =======================================================
+
+cat("Computing spectral indices...\n")
+
+all_landsat <- all_landsat %>%
+  mutate(
+    # NDVI (Near_Infrared - Red) / (Near_Infrared + Red)
+    ndvi = ifelse(is.finite((Near_Infrared - Red) / (Near_Infrared + Red)), 
+                 (Near_Infrared - Red) / (Near_Infrared + Red), NA),
+    
+    # NDWI (Green - Near_Infrared) / (Green + Near_Infrared)
+    ndwi = ifelse(is.finite((Green - Near_Infrared) / (Green + Near_Infrared)), 
+                 (Green - Near_Infrared) / (Green + Near_Infrared), NA),
+    
+    # EVI Enhanced Vegetation Index
+    evi = ifelse(is.finite(2.5 * ((Near_Infrared - Red) / (Near_Infrared + 6 * Red - 7.5 * Blue + 1))),
+                2.5 * ((Near_Infrared - Red) / (Near_Infrared + 6 * Red - 7.5 * Blue + 1)), NA),
+    
+    # Simple Ratio
+    sr = ifelse(is.finite(Near_Infrared / Red) & Red != 0, Near_Infrared / Red, NA)
+  )
+
+# =======================================================
+# 3. DEFINE FEATURES
+# =======================================================
+
+# Define all available features
+spectral_bands <- c("Coastal_Aerosol", "Blue", "Green", "Red", "Near_Infrared", 
+                   "Shortwave_Infrared_1", "Shortwave_Infrared_2")
+
+spectral_indices <- c("ndvi", "ndwi", "evi", "sr")
+
+# All features for modeling
+all_features <- c(spectral_bands, spectral_indices)
+
+cat("Features for modeling:", paste(all_features, collapse = ", "), "\n")
+
+# =======================================================
+# 4. CLEAN AND PREPARE DATA
+# =======================================================
+
+cat("Cleaning data...\n")
+
+# Clean data
+all_landsat_clean <- all_landsat %>%
+  filter(complete.cases(.[, all_features])) %>%
+  filter(!is.na(agriculture)) %>%
+  # Ensure agriculture is a factor
+  mutate(agriculture = as.factor(agriculture)) %>%
+  # Remove any infinite values
+  filter_at(vars(all_of(all_features)), all_vars(is.finite(.)))
+
+cat("Data after cleaning:", nrow(all_landsat_clean), "rows\n")
+cat("Agriculture classes:", paste(levels(all_landsat_clean$agriculture), collapse = ", "), "\n")
+
+# =======================================================
+# 5. CREATE TRAIN/TEST SPLIT FOR AGRICULTURE CLASSIFICATION
+# =======================================================
+
+set.seed(123)  # For reproducibility
+
+cat("Creating train/test split for agriculture classification...\n")
+
+# Limit to manageable size if dataset is very large
+max_samples <- 100000  # Adjust this number based on your computer's capacity
+if (nrow(all_landsat_clean) > max_samples) {
+  cat("Dataset is large, sampling", max_samples, "rows for faster processing...\n")
+  all_landsat_clean <- all_landsat_clean %>%
+    group_by(agriculture) %>%
+    sample_n(min(n(), max_samples/2)) %>%  # Equal samples from each class
+    ungroup()
+}
+
+# Create stratified split
+train_indices <- createDataPartition(
+  all_landsat_clean$agriculture, 
+  p = 0.7,  # 70% for training
+  list = FALSE
+)
+
+train_data <- all_landsat_clean[train_indices, ]
+test_data <- all_landsat_clean[-train_indices, ]
+
+# Print split summary
+cat("\n=== AGRICULTURE CLASSIFICATION SPLIT SUMMARY ===\n")
+cat("Total samples:", nrow(all_landsat_clean), "\n")
+cat("Training samples:", nrow(train_data), "\n")
+cat("Testing samples:", nrow(test_data), "\n")
+cat("Test proportion:", round(nrow(test_data) / nrow(all_landsat_clean), 3), "\n")
+
+cat("\nClass distribution in training set:\n")
+print(table(train_data$agriculture))
+
+cat("\nClass distribution in testing set:\n")
+print(table(test_data$agriculture))
+
+# =======================================================
+# 6. SAVE THE DATASETS
+# =======================================================
+
+cat("\nSaving datasets...\n")
+
+# Save training data
+write.csv(train_data, "oahu_agriculture_train_data.csv", row.names = FALSE)
+cat("Saved: oahu_agriculture_train_data.csv\n")
+
+# Save testing data
+write.csv(test_data, "oahu_agriculture_test_data.csv", row.names = FALSE)
+cat("Saved: oahu_agriculture_test_data.csv\n")
+
+# Save full processed data
+write.csv(all_landsat_clean, "oahu_agriculture_full_data.csv", row.names = FALSE)
+cat("Saved: oahu_agriculture_full_data.csv\n")
+
+# =======================================================
+# 7. CREATE AGRICULTURE TYPE SPLIT (OPTIONAL)
+# =======================================================
+
+cat("\nCreating agriculture type classification data...\n")
+
+# Filter only agricultural areas and create specific type labels
+ag_only <- all_landsat_clean %>%
+  filter(agriculture == "Yes") %>%
+  mutate(
+    ag_type = case_when(
+      Cropland_and_Pasture == 1 ~ "Cropland_Pasture",
+      Orchards_Groves_Vineyards == 1 ~ "Orchards_Vineyards", 
+      Confined_Feeding == 1 ~ "Confined_Feeding",
+      Other_Ag_Land == 1 ~ "Other_Agricultural",
+      Herbaceous_Rangeland == 1 ~ "Herbaceous_Range",
+      Shrub_Brush_Rangeland == 1 ~ "Shrub_Range",
+      Mixed_Rangeland == 1 ~ "Mixed_Range",
+      TRUE ~ "Multiple_Types"  # For pixels with multiple agriculture types
+    )
+  ) %>%
+  mutate(ag_type = as.factor(ag_type))
+
+cat("Agriculture types found:\n")
+print(table(ag_only$ag_type))
+
+# Only proceed if we have enough samples of each type
+type_counts <- table(ag_only$ag_type)
+if (length(type_counts) > 1 && min(type_counts) >= 100) {
+  
+  # Create train/test split for agriculture types
+  ag_train_indices <- createDataPartition(
+    ag_only$ag_type, 
+    p = 0.7, 
+    list = FALSE
+  )
+  
+  ag_train <- ag_only[ag_train_indices, ]
+  ag_test <- ag_only[-ag_train_indices, ]
+  
+  # Save agriculture type datasets
+  write.csv(ag_train, "oahu_ag_types_train_data.csv", row.names = FALSE)
+  write.csv(ag_test, "oahu_ag_types_test_data.csv", row.names = FALSE)
+  write.csv(ag_only, "oahu_ag_types_full_data.csv", row.names = FALSE)
+  
+  cat("Saved agriculture type classification files\n")
+  cat("Agriculture type training samples:", nrow(ag_train), "\n")
+  cat("Agriculture type testing samples:", nrow(ag_test), "\n")
+  
+} else {
+  cat("Not enough samples for agriculture type classification\n")
+}
+
+# =======================================================
+# 8. VERIFICATION
+# =======================================================
+
+cat("\n=== VERIFICATION ===\n")
+cat("Files created:\n")
+cat("- oahu_agriculture_train_data.csv (", nrow(train_data), "rows )\n")
+cat("- oahu_agriculture_test_data.csv (", nrow(test_data), "rows )\n")
+cat("- oahu_agriculture_full_data.csv (", nrow(all_landsat_clean), "rows )\n")
+
+# Check if files exist
+files_created <- list.files(pattern = "oahu_agriculture.*\\.csv")
+cat("Files found:", paste(files_created, collapse = ", "), "\n")
+
+cat("\n=== READY FOR RANDOM FOREST MODELING! ===\n")
+cat("Features to use:", paste(all_features, collapse = ", "), "\n")
+cat("Target variable: agriculture\n")
+cat("Use 'oahu_agriculture_train_data.csv' to train your model\n")
+cat("Use 'oahu_agriculture_test_data.csv' to test your model\n")
+``` 
+
