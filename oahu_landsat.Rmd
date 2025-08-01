@@ -146,43 +146,6 @@ df_zones_sf <- st_as_sf(df_with_zones, coords = c("x","y"))
 plot(df_zones_sf)
 
 ```
-
-```{r}
-#adding NDVI variable to df, hopefully to target vegetative/agricultural land
-
-NDVI_df <- df %>%
-  mutate(NDVI = (SR_B5 - SR_B4) / (SR_B5 + SR_B4))
-
-# Data is already clean
-#clean_NDVI_df <- NDVI_df %>%
-  #filter(is.finite(NDVI), NDVI >= -1, NDVI <= 1)
-```
-```{r}
-#kmeans
-set.seed(123)
-km_result <- kmeans(NDVI_df [, c("x","y",)], 10, iter.max = 10)
-NDVI_df$cluster <- as.factor(km_result$cluster)
-
-ggplot(NDVI_df, aes(x = x, y = y, color = cluster)) +
-  geom_point(size = 2.5, alpha = 0.8) +
-  coord_fixed(ratio = 1.3) +  # keeps map proportion realistic
-  theme_minimal() +
-  scale_color_brewer(palette = "Set1")
-```
-
-```{r}
-#visualizing high NDVI values for a specific year
-#NDVI_df_2024 <- NDVI_df %>%
-  #filter(image_year == 2024)
-NDVI_max <- max(NDVI_df$NDVI, na.rm = TRUE)
-NDVI_max
-NDVI_min <- min(NDVI_df$NDVI, na.rm = TRUE)
-NDVI_min
-ggplot(NDVI_df, mapping = aes(x = x, y = y, fill = NDVI)) + geom_tile() + scale_fill_viridis()
-
-```
-
-
 =======
 ---
 title: "Clean Raw Landsat"
@@ -300,3 +263,219 @@ Adding draft clusters with k-means clustering
 
 
 >>>>>>> main
+
+```{r}
+#adding NDVI variable to df, hopefully to target vegetative/agricultural land
+
+NDVI_df <- df_with_zones %>%
+  mutate(NDVI = (SR_B5 - SR_B4) / (SR_B5 + SR_B4))
+# NDWI calculation
+NDVI_df <- NDVI_df %>%
+  mutate(NDWI = (SR_B3 - SR_B5) / (SR_B3 + SR_B5))
+# MNDWI calculation
+NDVI_df <- NDVI_df %>%
+  mutate(MNDWI = (SR_B3 - SR_B6) / (SR_B3 + SR_B6))
+# NDBI calculation
+NDVI_df <- NDVI_df %>%
+  mutate(NDBI = (SR_B6 - SR_B5) / (SR_B6 + SR_B5))
+# Data is already clean
+#clean_NDVI_df <- NDVI_df %>%
+  #filter(is.finite(NDVI), NDVI >= -1, NDVI <= 1)
+```
+
+```{r}
+#visualizing high NDVI values for a specific year
+#NDVI_df_2024 <- NDVI_df %>%
+  #filter(image_year == 2024)
+ggplot(NDVI_df, mapping = aes(x = x, y = y, fill = NDVI)) + geom_tile() + scale_fill_viridis()
+
+```
+
+```{r}
+# Clone list
+df_list_with_zones <- list()
+
+for (i in seq_along(df_list)) {
+  df_list_with_zones[[i]] <- df_list[[i]] %>%
+    semi_join(df_with_zones, by = c("x", "y"))
+}
+  
+
+
+
+# Compute indices
+for (i in seq_along(df_list_with_zones)) {
+  df <- df_list_with_zones[[i]]
+  
+  df <- df %>%
+    mutate(
+      NDVI  = (Near_Infrared - Red) / (Near_Infrared + Red),
+      NDWI  = (Green - Near_Infrared) / (Green + Near_Infrared),
+      MNDWI = (Green - Shortwave_Infrared_1) / (Green + Shortwave_Infrared_1),
+      NDBI  = (Shortwave_Infrared_1 - Near_Infrared) / (Shortwave_Infrared_1 + Near_Infrared)
+    )
+  df %>%
+    filter(is.finite(NDVI), NDVI >= -1, NDVI <= 1)
+  df_list_with_zones[[i]] <- df
+}
+```
+
+
+```{r}
+#scaling
+scaled_features <- NDVI_df[, c("SR_B1", "SR_B2", "SR_B3", "SR_B4",
+                               "SR_B5", "SR_B6", "SR_B7",
+                               "NDVI", "NDWI", "MNDWI", "NDBI")] %>%
+  scale()
+```
+
+```{r}
+# Initialize the output list first
+lukas_df_list <- list()
+
+for (i in seq_along(df_list_with_zones)) {
+  
+  # Check what columns exist
+  available_cols <- names(df_list_with_zones[[i]])
+  print(paste("DataFrame", i, "columns:", paste(available_cols, collapse = ", ")))
+  
+  # Select only columns that actually exist
+  feature_cols <- intersect(c("Coastal_Aerosol", "Blue", "Green", "Red", 
+                             "Near_Infrared", "Shortwave_Infrared_1", "Shortwave_Infrared_2",
+                             "NDVI", "NDWI", "MNDWI", "NDBI"), 
+                           available_cols)
+  
+  if(length(feature_cols) > 0) {
+    # Scale the features
+    scaled_features <- df_list_with_zones[[i]][, feature_cols] %>%
+      scale()
+    
+    # Run kmeans
+    km <- kmeans(scaled_features, centers = 25, nstart = 25, iter.max = 100)
+    
+    # Add cluster to original dataframe
+    df_list_with_zones[[i]]$cluster <- as.factor(km$cluster)
+    
+    # Save to output list
+    lukas_df_list[[i]] <- df_list_with_zones[[i]]
+  }
+}
+```
+```{r}
+library(gridExtra)
+library(ggplot2)
+
+# Create individual plots for each year
+plot_list <- list()
+
+for (i in seq_along(lukas_df_list)) {
+  if (!is.null(lukas_df_list[[i]])) {
+    year_data <- lukas_df_list[[i]]
+    year <- unique(year_data$image_year)[1]  # Get the year
+    
+    plot_list[[i]] <- ggplot(year_data, aes(x = x, y = y, color = cluster)) +
+      geom_point(size = 0.3, alpha = 0.8) +
+      scale_color_viridis_d(name = "Cluster") +
+      labs(title = paste("Year", year)) +
+      theme_void() +
+      coord_equal() +
+      theme(
+        plot.title = element_text(size = 10, hjust = 0.5),
+        legend.position = "none"  # Remove individual legends
+      )
+  }
+}
+
+# Display all plots in a grid
+do.call(grid.arrange, c(plot_list, ncol = 3))
+```
+
+```{r}
+#kmeans for all
+set.seed(123)
+km_result_all <- kmeans(
+  NDVI_df[, c("SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B6", "SR_B7", "NDVI", "NDWI", "MNDWI", "NDBI")], 
+  centers = 25,
+  nstart = 25,
+  iter.max = 100
+)
+```
+
+```{r}
+#kmeans for indices
+set.seed(123)
+km_result_indices <- kmeans(
+  NDVI_df[, c("NDVI", "NDWI", "MNDWI", "NDBI")], 
+  centers = 25,
+  nstart = 25,
+  iter.max = 100
+)
+```
+
+```{r}
+#kmeans for bands
+set.seed(123)
+km_result_bands <- kmeans(
+  NDVI_df[, c("SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B6", "SR_B7")], 
+  centers = 25,
+  nstart = 25,
+  iter.max = 100
+)
+```
+
+```{r}
+#clusters
+NDVI_df$cluster_all     <- as.factor(km_result_all$cluster)
+NDVI_df$cluster_bands   <- as.factor(km_result_bands$cluster)
+NDVI_df$cluster_indices <- as.factor(km_result_indices$cluster)
+```
+
+
+```{r}
+ggplot(NDVI_df, aes(x = x, y = y, color = cluster_all)) +
+  geom_point(size = 0.5, alpha = 0.8) +
+  scale_color_viridis_d(name = "Cluster") +
+  labs(title = "Clustering: All Bands + Indices") +
+  theme_void() +
+  coord_equal()
+```
+
+```{r}
+ggplot(NDVI_df, aes(x = x, y = y, color = cluster_bands)) +
+  geom_point(size = 0.5, alpha = 0.8) +
+  scale_color_viridis_d(name = "Cluster") +
+  labs(title = "Clustering: All Bands + Indices") +
+  theme_void() +
+  coord_equal()
+```
+
+```{r}
+ggplot(NDVI_df, aes(x = x, y = y, color = cluster_indices)) +
+  geom_point(size = 0.5, alpha = 0.8) +
+  scale_color_viridis_d(name = "Cluster") +
+  labs(title = "Clustering: All Bands + Indices") +
+  theme_void() +
+  coord_equal()
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+#wss <- sapply(1:50, function(k) {
+  #kmeans(scaled_features, centers = k, nstart = 25, iter.max = 100)$tot.withinss
+#})
+#plot(1:50, wss, type = "b", pch = 19,
+#     xlab = "Number of Clusters K",
+#     ylab = "Total Within-Cluster Sum of Squares")
+#NDVI_df$cluster <- as.factor(km_result$cluster)
+
+#NDVI_df %>%
+  #group_by(cluster) %>%
+  #summarise(across(c(NDVI, NDWI, MNDWI, NDBI), mean))
+```
