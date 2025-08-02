@@ -1,151 +1,3 @@
-<<<<<<< HEAD
----
-title: "Clean Raw Landsat"
-author: "Madeline Berger"
-date: "2025-07-30"
-output: html_document
----
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-
-# load packages 
-
-library(terra) # for rasters
-library(sf) # for vector data
-library(tidyverse)
-library(here) # I use this to easily create relative file paths
-
-# set file path to data folder 
-
-oahu_raw_data <- here("low_resolution/oahu")
-
-zoning <- here("low_resolution/honolulu_zoning")
-
-
-```
-
-Read in one raster and convert to data frame (as an example). Read in and look at zoning shapefile
-
-```{r}
-
-
-first_rast <- terra::rast(file.path(oahu_raw_data,"Oahu_2014_LS8_composite_low_resolution.tif")) #read in the tif file as a SpatRaster using terra
-
-first_rast # get summary of whats in the raster
-
-nlyr(first_rast) # there are the bands
-
-# what happens when we run as data frame
-
-
-first_df <- as.data.frame(first_rast, xy = T)
-
-#read in zoning
-
-zones_raw <- read_sf(file.path(zoning,"Zoning.shp"))
-
-# quick visualize
-library(mapview)
-
-mapview(zones_raw, zcol = "zone_class")
-
-
-```
-
-Convert shapefiles to raster using the "zones_class" 
-
-```{r}
-
-st_crs(zones_raw) #hi zone 3 
-
-# convert to match raster
-
-zones_wgs84 <- st_transform(zones_raw, crs = crs(first_rast))
-
-# create raster template from landsat raster
-r_temp <- rast(first_rast)
-
-zones_rast <- rasterize(zones_wgs84, r_temp, field = "zone_class")
-
-
-plot(zones_rast)
-
-# make sure its origin and extent are aligned with landsat rasters 
-
-
-ext_landsat <- ext(first_rast)
-ext_zones <- ext(zones_rast)
-
-origin_landsat <- origin(first_rast)
-origin_zones <- origin(zones_rast)
-
-
-res(first_rast) == res(zones_rast) # check if true
-
-# convert zones rast to df to join to land use df
-
-zones_rast_df <- as.data.frame(zones_rast, xy = T)
-
-```
-
-
-
-
-
-Loop to read in each raster and convert to data frame. The steps will:
-- run through each file and read it in as a Spat Raster
-- create a df of each
-- save each one in a list with a new column for year
-
-```{r}
-
-# list each landsat raster
-
-tif_files <- list.files(oahu_raw_data,
-                        pattern = ".tif")
-
-# create empty list
-
-df_list <- list()
-
-for (i in 1:length(tif_files)){
-  
-  # for testing
-  #i = 1
-  
-  # file name
-  f = tif_files[i]
-  
-  # get year from file name
-  year = substr(f,6,9)
-  
-  # read in raster
-  rast = terra::rast(file.path(oahu_raw_data,f))
-  
-  # convert to df, add column with year
-  
-  df <- as.data.frame(rast, xy = T) %>% mutate(image_year = rep(year, nrow(.)))
-  
-  df_with_zones <- left_join(df, zones_rast_df, by = c("x","y")) %>% 
-    filter(!is.na(zone_class))
-  
-  # save to list 
-
-  df_list[[i]] <- df_with_zones
-  
-}
-
-
-# now we have a list of dfs with band values, year and the zone it falls into for each pixel
-
-
-# for visulizaing if this work 
-df_zones_sf <- st_as_sf(df_with_zones, coords = c("x","y"))
-
-plot(df_zones_sf)
-
-```
 =======
 ---
 title: "Clean Raw Landsat"
@@ -169,6 +21,11 @@ library(here) # I use this to easily create relative file paths
 # added to update column names
 
 library(dplyr) # Load dplyr
+
+# added for cluster visualization
+
+library(ggplot2)
+library(ggpubr) # For stat_ellipse
 
 # set file path to data folder 
 
@@ -251,231 +108,635 @@ for (i in 1:length(tif_files)){
 
 # now we have a list of dfs for each year 
 
-```
-
-Adding draft clusters with k-means clustering
-
-```{r}
-
-# 
 
 ```
 
-
->>>>>>> main
+Find clusters with k-means clustering for whole group and then separate into years 
 
 ```{r}
-#adding NDVI variable to df, hopefully to target vegetative/agricultural land
+# Set seed for consistency
+set.seed(123)
 
-NDVI_df <- df_with_zones %>%
-  mutate(NDVI = (SR_B5 - SR_B4) / (SR_B5 + SR_B4))
-# NDWI calculation
-NDVI_df <- NDVI_df %>%
-  mutate(NDWI = (SR_B3 - SR_B5) / (SR_B3 + SR_B5))
-# MNDWI calculation
-NDVI_df <- NDVI_df %>%
-  mutate(MNDWI = (SR_B3 - SR_B6) / (SR_B3 + SR_B6))
-# NDBI calculation
-NDVI_df <- NDVI_df %>%
-  mutate(NDBI = (SR_B6 - SR_B5) / (SR_B6 + SR_B5))
-# Data is already clean
-#clean_NDVI_df <- NDVI_df %>%
-  #filter(is.finite(NDVI), NDVI >= -1, NDVI <= 1)
+# Combine all data for clustering
+combined_df <- do.call(rbind, df_list)
+
+# Extract numeric columns and scale
+df_numeric_all <- scale(combined_df[, !names(combined_df) %in% c("x", "y", "image_year")])
+
+# Run k-means on all data together
+kmeans_all <- kmeans(df_numeric_all, centers = 5, nstart = 20, iter.max = 100)
+
+# Add cluster assignments back to combined data
+combined_df$cluster <- kmeans_all$cluster
+
+# Split back into individual years
+df_list_new <- split(combined_df, combined_df$image_year)
+
+# Convert back to list format matching original structure
+df_list <- lapply(names(df_list_new), function(year) {
+  df_list_new[[year]]
+})
+
+# Print cluster distributions for each year
+for (i in seq_along(df_list)) {
+  year <- unique(df_list[[i]]$image_year)
+  cat("Year", year, "cluster distribution:\n")
+  print(table(df_list[[i]]$cluster))
+}
 ```
 
-```{r}
-#visualizing high NDVI values for a specific year
-#NDVI_df_2024 <- NDVI_df %>%
-  #filter(image_year == 2024)
-ggplot(NDVI_df, mapping = aes(x = x, y = y, fill = NDVI)) + geom_tile() + scale_fill_viridis()
-
-```
+Visualize the color coded clusters by year with ggplot2
 
 ```{r}
-# Clone list
-df_list_with_zones <- list()
+# First, check what clusters exist across all years
+all_clusters <- unique(unlist(lapply(df_list, function(df) unique(df$cluster))))
+cat("Clusters found across all years:", sort(all_clusters), "\n")
+
+# Define colors for all possible clusters
+cluster_colors <- c("1" = "#ccdb41", "2" = "#4ebcff", "3" = "#a4d280", 
+                    "4" = "#78c7c1", "5" = "#f7e501")
+
+cluster_plots <- list()
 
 for (i in seq_along(df_list)) {
-  df_list_with_zones[[i]] <- df_list[[i]] %>%
-    semi_join(df_with_zones, by = c("x", "y"))
-}
+  year <- unique(df_list[[i]]$image_year)
   
-
-
-
-# Compute indices
-for (i in seq_along(df_list_with_zones)) {
-  df <- df_list_with_zones[[i]]
+  # Ensure cluster column is a factor with all levels
+  df_list[[i]]$cluster <- factor(df_list[[i]]$cluster, levels = 1:5)
   
-  df <- df %>%
-    mutate(
-      NDVI  = (Near_Infrared - Red) / (Near_Infrared + Red),
-      NDWI  = (Green - Near_Infrared) / (Green + Near_Infrared),
-      MNDWI = (Green - Shortwave_Infrared_1) / (Green + Shortwave_Infrared_1),
-      NDBI  = (Shortwave_Infrared_1 - Near_Infrared) / (Shortwave_Infrared_1 + Near_Infrared)
-    )
-  df %>%
-    filter(is.finite(NDVI), NDVI >= -1, NDVI <= 1)
-  df_list_with_zones[[i]] <- df
+  cluster_plots[[i]] <- ggplot(df_list[[i]], aes(x = x, y = y, color = cluster)) +
+    geom_point(size = 0.5, alpha = 0.7) +
+    scale_color_manual(name = "Cluster", 
+                       values = cluster_colors,
+                       breaks = factor(1:5),
+                       drop = FALSE) +  # Keep all levels even if not present
+    labs(title = paste("K-means Clusters -", year),
+         x = "Longitude", 
+         y = "Latitude") +
+    theme_minimal() +
+    theme(axis.text = element_text(size = 8),
+          plot.title = element_text(size = 12, hjust = 0.5)) +
+    coord_fixed(ratio = 1)
+  
+  print(cluster_plots[[i]])
 }
+
 ```
 
+Visualize the combined plots with ggplot2 
 
 ```{r}
-#scaling
-scaled_features <- NDVI_df[, c("SR_B1", "SR_B2", "SR_B3", "SR_B4",
-                               "SR_B5", "SR_B6", "SR_B7",
-                               "NDVI", "NDWI", "MNDWI", "NDBI")] %>%
-  scale()
+
+combined_tile_plot <- ggplot(combined_df, aes(x = x, y = y, fill = factor(cluster))) +
+  geom_tile() +  # Use tiles for clean appearance
+  scale_fill_manual(name = "Cluster", values = cluster_colors) +
+  labs(title = "K-means Clusters - All Years Combined",
+       subtitle = paste("Years:", paste(sort(unique(combined_df$image_year)), collapse = ", ")),
+       x = "Longitude", 
+       y = "Latitude") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),  # Remove all grid lines
+        axis.text = element_text(size = 8),
+        plot.title = element_text(size = 14, hjust = 0.5),
+        plot.subtitle = element_text(size = 10, hjust = 0.5)) +
+  coord_fixed(ratio = 1)
+
+print(combined_tile_plot)
+
 ```
 
-```{r}
-# Initialize the output list first
-lukas_df_list <- list()
+Visualize the combined plots using groupby on cooridinates and the mode cluster 
 
-for (i in seq_along(df_list_with_zones)) {
-  
-  # Check what columns exist
-  available_cols <- names(df_list_with_zones[[i]])
-  print(paste("DataFrame", i, "columns:", paste(available_cols, collapse = ", ")))
-  
-  # Select only columns that actually exist
-  feature_cols <- intersect(c("Coastal_Aerosol", "Blue", "Green", "Red", 
-                             "Near_Infrared", "Shortwave_Infrared_1", "Shortwave_Infrared_2",
-                             "NDVI", "NDWI", "MNDWI", "NDBI"), 
-                           available_cols)
-  
-  if(length(feature_cols) > 0) {
-    # Scale the features
-    scaled_features <- df_list_with_zones[[i]][, feature_cols] %>%
-      scale()
-    
-    # Run kmeans
-    km <- kmeans(scaled_features, centers = 25, nstart = 25, iter.max = 100)
-    
-    # Add cluster to original dataframe
-    df_list_with_zones[[i]]$cluster <- as.factor(km$cluster)
-    
-    # Save to output list
-    lukas_df_list[[i]] <- df_list_with_zones[[i]]
-  }
+```{r}
+
+library(dplyr)
+
+# Group by coordinates and find the most common cluster (mode)
+get_mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
 }
+
+# Aggregate data by coordinates
+aggregated_df <- combined_df %>%
+  group_by(x, y) %>%
+  summarise(
+    dominant_cluster = get_mode(cluster),
+    cluster_count = n(),
+    cluster_consistency = sum(cluster == dominant_cluster) / n(),
+    .groups = 'drop'
+  )
+
+# Plot dominant clusters
+dominant_cluster_plot <- ggplot(aggregated_df, aes(x = x, y = y, fill = factor(dominant_cluster))) +
+  geom_raster() +
+  scale_fill_manual(name = "Dominant\nCluster", values = cluster_colors) +
+  labs(title = "Dominant Clusters Across All Years Using the Mode of Clusters",
+       subtitle = "Most common cluster at each location",
+       x = "Longitude", 
+       y = "Latitude") +
+  theme_void() +
+  theme(plot.title = element_text(size = 14, hjust = 0.5),
+        plot.subtitle = element_text(size = 10, hjust = 0.5),
+        legend.position = "bottom") +
+  coord_fixed(ratio = 1)
+
+print(dominant_cluster_plot)
+
 ```
+Visualize the combined plots using groupby on coordinates, averaging the cluster number by year
+
 ```{r}
-library(gridExtra)
+library(patchwork)
+
+# Create all three plots
+spatial_summary_proper <- combined_df %>%
+  group_by(x, y) %>%
+  summarise(
+    mode_cluster = get_mode(cluster),
+    mean_cluster = mean(cluster),
+    cluster_count = n(),
+    cluster_consistency = sum(cluster == mode_cluster) / n(),
+    .groups = 'drop'
+  )
+
+# Then use the proper plots:
+plot1 <- ggplot(spatial_summary_proper, aes(x = x, y = y, fill = factor(mode_cluster))) +
+  geom_raster() +
+  scale_fill_manual(name = "Mode\nCluster", values = cluster_colors) +
+  labs(title = "Mode Cluster", x = "Longitude", y = "Latitude") +
+  theme_void() + 
+  theme(legend.position = "bottom") +
+  coord_fixed(ratio = 1)
+
+plot2 <- ggplot(spatial_summary_proper, aes(x = x, y = y, fill = factor(round(mean_cluster)))) +
+  geom_raster() +
+  scale_fill_manual(name = "Rounded\nMean", values = cluster_colors) +
+  labs(title = "Mean Cluster", x = "Longitude", y = "Latitude") +
+  theme_void() + 
+  theme(legend.position = "bottom") +
+  coord_fixed(ratio = 1)
+
+# Combine plots
+combined_comparison <- plot1 / plot2 +
+  plot_annotation(title = "Cluster Summary Comparison")
+
+print(combined_comparison)
+```
+Validate k clusters model with subset of original data
+
+```{r}
+# Use original centroids as starting points for subset model
+# This ensures clusters will be more similar
+
+# seed again
+set.seed(123)
+
+# Get the original scaling parameters
+original_scaling_params <- list(
+  center = attr(df_numeric_all, "scaled:center"),
+  scale = attr(df_numeric_all, "scaled:scale")
+)
+
+# Scale training data using original parameters
+train_features_original_scale <- scale(train_data[, training_columns], 
+                                      center = original_scaling_params$center, 
+                                      scale = original_scaling_params$scale)
+
+# Use original centroids as starting points
+kmeans_subset_fixed <- kmeans(train_features_original_scale, 
+                             centers = kmeans_all$centers,  # Use original centroids
+                             nstart = 1,  # Only one start since we provide centers
+                             iter.max = 100)
+
+# Now predict using this model
+predict_with_fixed_centers <- function(new_data, original_centers, scaling_params, training_columns) {
+  # Extract and scale data
+  new_data_subset <- new_data[, training_columns, drop = FALSE]
+  new_data_scaled <- scale(new_data_subset, 
+                          center = scaling_params$center, 
+                          scale = scaling_params$scale)
+  
+  # Calculate distances to original centroids
+  distances <- apply(new_data_scaled, 1, function(x) {
+    apply(original_centers, 1, function(center) {
+      sum((x - center)^2)
+    })
+  })
+  
+  # Assign to closest centroid
+  cluster_assignments <- apply(distances, 2, which.min)
+  return(cluster_assignments)
+}
+
+# Apply to test data
+test_predictions_fixed <- test_data
+test_predictions_fixed$predicted_cluster <- predict_with_fixed_centers(test_data, 
+                                                                      kmeans_all$centers, 
+                                                                      original_scaling_params, 
+                                                                      training_columns)
+
+# Compare results
+cat("\nUsing fixed centroids approach:\n")
+print("Original:")
+print(table(test_data$cluster))
+print("Predicted (fixed centroids):")
+print(table(test_predictions_fixed$predicted_cluster))
+
+agreement_fixed <- sum(test_data$cluster == test_predictions_fixed$predicted_cluster) / nrow(test_data)
+cat("Agreement rate (fixed centroids):", round(agreement_fixed * 100, 2), "%\n")
+
+```
+Visualize validation
+
+```{r}
+
 library(ggplot2)
+library(patchwork)
 
-# Create individual plots for each year
-plot_list <- list()
+# Define your consistent color scheme
+cluster_colors <- c("1" = "#ccdb41", "2" = "#4ebcff", "3" = "#a4d280", 
+                    "4" = "#78c7c1", "5" = "#f7e501")
 
-for (i in seq_along(lukas_df_list)) {
-  if (!is.null(lukas_df_list[[i]])) {
-    year_data <- lukas_df_list[[i]]
-    year <- unique(year_data$image_year)[1]  # Get the year
-    
-    plot_list[[i]] <- ggplot(year_data, aes(x = x, y = y, color = cluster)) +
-      geom_point(size = 0.3, alpha = 0.8) +
-      scale_color_viridis_d(name = "Cluster") +
-      labs(title = paste("Year", year)) +
-      theme_void() +
-      coord_equal() +
-      theme(
-        plot.title = element_text(size = 10, hjust = 0.5),
-        legend.position = "none"  # Remove individual legends
-      )
+# Plot 1: Original clusters on test data
+original_plot <- ggplot(test_data, aes(x = x, y = y, fill = factor(cluster))) +
+  geom_raster() +
+  scale_fill_manual(name = "Cluster", values = cluster_colors) +
+  labs(title = "Original Clusters (Test Data)", 
+       x = "Longitude", y = "Latitude") +
+  theme_void() +
+  theme(plot.title = element_text(size = 12, hjust = 0.5)) +
+  coord_fixed(ratio = 1)
+
+# Plot 2: Predicted clusters on test data
+predicted_plot <- ggplot(test_predictions_fixed, aes(x = x, y = y, fill = factor(predicted_cluster))) +
+  geom_raster() +
+  scale_fill_manual(name = "Cluster", values = cluster_colors) +
+  labs(title = "Predicted Clusters (Test Data)", 
+       x = "Longitude", y = "Latitude") +
+  theme_void() +
+  theme(plot.title = element_text(size = 12, hjust = 0.5)) +
+  coord_fixed(ratio = 1)
+
+# Plot 3: Agreement/disagreement map
+test_predictions_fixed$agreement <- test_data$cluster == test_predictions_fixed$predicted_cluster
+
+agreement_plot <- ggplot(test_predictions_fixed, aes(x = x, y = y, fill = agreement)) +
+  geom_raster() +
+  scale_fill_manual(name = "Prediction", 
+                    values = c("TRUE" = "#2ecc71", "FALSE" = "#e74c3c"),
+                    labels = c("Correct", "Incorrect")) +
+  labs(title = paste("Model Agreement:", round(agreement_fixed * 100, 1), "%"), 
+       x = "Longitude", y = "Latitude") +
+  theme_void() +
+  theme(plot.title = element_text(size = 12, hjust = 0.5)) +
+  coord_fixed(ratio = 1)
+
+# Display individual plots
+print(original_plot)
+print(predicted_plot)
+print(agreement_plot)
+
+# Combined plot using patchwork
+combined_validation_plot <- (original_plot | predicted_plot) / agreement_plot +
+  plot_layout(guides = "collect") +
+  plot_annotation(title = "K-means Model Validation Results",
+                  theme = theme(plot.title = element_text(size = 16, hjust = 0.5)))
+
+print(combined_validation_plot)
+
+```
+Compare clusters by year against the mode and or mean to show the change.
+
+```{r}
+
+
+
+```
+
+Test using the k clusters model on new (older) data - no built in predict() for k-clusters
+(Update the data - waiting for data from Maddie)
+
+```{r}
+
+# Create a custom predict function for k-means
+predict_kmeans <- function(kmeans_model, new_data, scale_params = NULL) {
+  # If scale parameters are provided, scale the new data the same way
+  if (!is.null(scale_params)) {
+    new_data_scaled <- scale(new_data, 
+                            center = scale_params$center, 
+                            scale = scale_params$scale)
+  } else {
+    new_data_scaled <- new_data
+  }
+  
+  # Calculate distances to each centroid
+  distances <- apply(new_data_scaled, 1, function(x) {
+    apply(kmeans_model$centers, 1, function(center) {
+      sum((x - center)^2)  # Euclidean distance squared
+    })
+  })
+  
+  # Assign to closest centroid
+  cluster_assignments <- apply(distances, 2, which.min)
+  
+  return(cluster_assignments)
+}
+
+# Save scaling parameters from your training data
+scaling_params <- list(
+  center = attr(df_numeric_all, "scaled:center"),
+  scale = attr(df_numeric_all, "scaled:scale")
+)
+
+# Save the column names used for training
+training_columns <- names(combined_df)[!names(combined_df) %in% c("x", "y", "image_year", "cluster")]
+
+# Example: Apply to a new dataset (replace 'new_df' with your actual test data)
+# new_df should have the same spectral band columns as your training data
+
+apply_kmeans_to_new_data <- function(new_df, kmeans_model, scaling_params, training_columns) {
+  
+  # Check if new data has required columns
+  missing_cols <- setdiff(training_columns, names(new_df))
+  if (length(missing_cols) > 0) {
+    stop("Missing columns in new data: ", paste(missing_cols, collapse = ", "))
+  }
+  
+  # Extract and order columns to match training data
+  new_data_subset <- new_df[, training_columns, drop = FALSE]
+  
+  # Apply the same scaling as training data
+  new_data_scaled <- scale(new_data_subset, 
+                          center = scaling_params$center, 
+                          scale = scaling_params$scale)
+  
+  # Predict clusters
+  predicted_clusters <- predict_kmeans(kmeans_model, new_data_scaled)
+  
+  # Add predictions back to original dataframe
+  new_df$predicted_cluster <- predicted_clusters
+  
+  return(new_df)
+}
+
+# Example usage 
+new_df_with_clusters <- apply_kmeans_to_new_data(new_test_df, kmeans_all, scaling_params, training_columns)
+
+```
+
+Visualize the predictions
+
+```{r}
+
+# Function to plot predictions with consistent colors
+plot_predictions <- function(predicted_df, title = "Predicted Clusters") {
+  
+  cluster_colors <- c("1" = "#ccdb41", "2" = "#4ebcff", "3" = "#a4d280", 
+                      "4" = "#78c7c1", "5" = "#f7e501")
+  
+  ggplot(predicted_df, aes(x = x, y = y, fill = factor(predicted_cluster))) +
+    geom_raster() +
+    scale_fill_manual(name = "Predicted\nCluster", values = cluster_colors) +
+    labs(title = title, x = "Longitude", y = "Latitude") +
+    theme_void() +
+    coord_fixed(ratio = 1)
+}
+
+# Example usage:
+plot_predictions(new_df_with_clusters, "Predictions on New Data")
+
+```
+
+Use table() to make matrix showing difference between the year clusters and overall mean or mode cluster
+
+```{r}
+
+# First, calculate the spatial summary with mode and mean clusters
+library(dplyr)
+
+# Helper function to get mode
+get_mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+# Calculate spatial summary (mode cluster for each location)
+spatial_summary <- combined_df %>%
+  group_by(x, y) %>%
+  summarise(
+    mode_cluster = get_mode(cluster),
+    mean_cluster = mean(cluster),
+    .groups = 'drop'
+  )
+
+# Add mode cluster back to combined_df for comparison
+combined_df_with_mode <- combined_df %>%
+  left_join(spatial_summary, by = c("x", "y"))
+
+# METHOD 1: Cross-tabulation tables comparing individual years to mode cluster
+cat("=== COMPARISON TABLES: Individual Year Clusters vs Mode Clusters ===\n\n")
+
+comparison_tables <- list()
+years <- sort(unique(combined_df$image_year))
+
+for (year in years) {
+  year_data <- combined_df_with_mode[combined_df_with_mode$image_year == year, ]
+  
+  # Create cross-tabulation table
+  comparison_table <- table(
+    Year_Cluster = year_data$cluster,
+    Mode_Cluster = year_data$mode_cluster
+  )
+  
+  comparison_tables[[year]] <- comparison_table
+  
+  cat("Year", year, "vs Mode Cluster:\n")
+  print(comparison_table)
+  
+  # Calculate agreement percentage
+  agreement <- sum(diag(comparison_table)) / sum(comparison_table) * 100
+  cat("Agreement rate:", round(agreement, 2), "%\n\n")
+}
+
+# METHOD 2: Summary table showing cluster distribution differences
+cat("=== CLUSTER DISTRIBUTION COMPARISON ===\n")
+
+# Create a comprehensive comparison table
+distribution_comparison <- data.frame(
+  Cluster = 1:5,
+  Overall = as.numeric(table(combined_df$cluster)[1:5]),
+  Mode_Summary = as.numeric(table(spatial_summary$mode_cluster)[1:5])
+)
+
+# Add individual years
+for (year in years) {
+  year_data <- combined_df[combined_df$image_year == year, ]
+  year_counts <- table(factor(year_data$cluster, levels = 1:5))
+  distribution_comparison[[paste0("Year_", year)]] <- as.numeric(year_counts)
+}
+
+# Replace NA with 0
+distribution_comparison[is.na(distribution_comparison)] <- 0
+
+print("Cluster Distribution Comparison:")
+print(distribution_comparison)
+
+# METHOD 3: Percentage difference from overall distribution
+cat("\n=== PERCENTAGE DIFFERENCES FROM OVERALL DISTRIBUTION ===\n")
+
+overall_pct <- prop.table(table(combined_df$cluster)) * 100
+
+percentage_diff <- data.frame(
+  Cluster = 1:5,
+  Overall_Pct = as.numeric(overall_pct[1:5])
+)
+
+for (year in years) {
+  year_data <- combined_df[combined_df$image_year == year, ]
+  year_pct <- prop.table(table(factor(year_data$cluster, levels = 1:5))) * 100
+  percentage_diff[[paste0("Year_", year, "_Pct")]] <- as.numeric(year_pct)
+  percentage_diff[[paste0("Diff_", year)]] <- as.numeric(year_pct) - percentage_diff$Overall_Pct
+}
+
+print("Percentage Distribution and Differences:")
+print(round(percentage_diff, 2))
+
+# METHOD 4: Confusion matrix style - showing changes from overall to individual years
+cat("\n=== CONFUSION MATRICES (Year vs Overall Pattern) ===\n")
+
+for (year in years) {
+  year_data <- combined_df_with_mode[combined_df_with_mode$image_year == year, ]
+  
+  # Create confusion matrix
+  confusion_matrix <- table(
+    Predicted_Year = year_data$cluster,
+    Actual_Overall = year_data$mode_cluster
+  )
+  
+  cat("Year", year, "Confusion Matrix (rows=year cluster, cols=mode cluster):\n")
+  print(confusion_matrix)
+  
+  # Calculate precision and recall for each cluster
+  cat("Cluster-wise Agreement:\n")
+  for (i in 1:5) {
+    if (i %in% rownames(confusion_matrix) && i %in% colnames(confusion_matrix)) {
+      precision = confusion_matrix[as.character(i), as.character(i)] / sum(confusion_matrix[as.character(i), ])
+      recall = confusion_matrix[as.character(i), as.character(i)] / sum(confusion_matrix[, as.character(i)])
+      cat("Cluster", i, "- Precision:", round(precision * 100, 1), "%, Recall:", round(recall * 100, 1), "%\n")
+    }
+  }
+  cat("\n")
+}
+
+# METHOD 5: Create a summary matrix of all comparisons
+cat("=== SUMMARY MATRIX: All Years vs Mode ===\n")
+
+# Create a matrix where each cell shows the count of pixels that changed from mode to year-specific cluster
+all_years_comparison <- matrix(0, nrow = 5, ncol = 5, 
+                              dimnames = list(paste("Mode", 1:5), paste("Year_Avg", 1:5)))
+
+for (year in years) {
+  year_data <- combined_df_with_mode[combined_df_with_mode$image_year == year, ]
+  year_table <- table(year_data$mode_cluster, year_data$cluster)
+  all_years_comparison <- all_years_comparison + year_table
+}
+
+cat("Aggregated comparison (rows=mode cluster, cols=year clusters):\n")
+print(all_years_comparison)
+
+```
+Visualize it
+
+```{r}
+
+# Load required libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(reshape2)
+library(patchwork)
+
+# Define consistent colors
+cluster_colors <- c("1" = "#ccdb41", "2" = "#4ebcff", "3" = "#a4d280", 
+                    "4" = "#78c7c1", "5" = "#f7e501")
+
+
+# VISUALIZATION 2: Cluster Distribution Over Time
+# Create distribution data
+distribution_data <- combined_df %>%
+  group_by(image_year, cluster) %>%
+  summarise(count = n(), .groups = 'drop') %>%
+  group_by(image_year) %>%
+  mutate(percentage = count / sum(count) * 100)
+
+# Line plot showing cluster percentage over time
+ggplot(distribution_data, aes(x = as.numeric(image_year), y = percentage, color = factor(cluster))) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  scale_color_manual(name = "Cluster", values = cluster_colors) +
+  labs(title = "Cluster Distribution Changes Over Time",
+       x = "Year", y = "Percentage of Total Area") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# VISUALIZATION 3: Stacked Bar Chart
+ggplot(distribution_data, aes(x = factor(image_year), y = percentage, fill = factor(cluster))) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(name = "Cluster", values = cluster_colors) +
+  labs(title = "Cluster Composition by Year",
+       x = "Year", y = "Percentage") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Map showing change intensity
+ggplot(change_analysis, aes(x = x, y = y, fill = change_rate)) +
+  geom_raster() +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", 
+                       midpoint = 0.5, name = "Change\nRate") +
+  labs(title = "Spatial Pattern of Cluster Changes",
+       subtitle = "Red = High change, Blue = Stable",
+       x = "Longitude", y = "Latitude") +
+  theme_void() +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5)) +
+  coord_fixed(ratio = 1)
+
+# VISUALIZATION 6: Difference from Mode Heatmap
+# Show systematic deviations from mode
+deviation_matrix <- matrix(0, nrow = length(years), ncol = 5,
+                          dimnames = list(years, paste("Cluster", 1:5)))
+
+mode_counts <- table(spatial_summary$mode_cluster)
+mode_proportions <- prop.table(mode_counts)
+
+for (i in seq_along(years)) {
+  year_data <- combined_df[combined_df$image_year == years[i], ]
+  year_counts <- table(factor(year_data$cluster, levels = 1:5))
+  year_proportions <- prop.table(year_counts)
+  
+  # Calculate difference from mode proportions
+  for (j in 1:5) {
+    mode_prop <- ifelse(j %in% names(mode_proportions), mode_proportions[as.character(j)], 0)
+    deviation_matrix[i, j] <- year_proportions[j] - mode_prop
   }
 }
 
-# Display all plots in a grid
-do.call(grid.arrange, c(plot_list, ncol = 3))
-```
+# Convert to data frame for plotting
+deviation_df <- melt(deviation_matrix, varnames = c("Year", "Cluster"), value.name = "Deviation")
 
-```{r}
-#kmeans for all
-set.seed(123)
-km_result_all <- kmeans(
-  NDVI_df[, c("SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B6", "SR_B7", "NDVI", "NDWI", "MNDWI", "NDBI")], 
-  centers = 25,
-  nstart = 25,
-  iter.max = 100
-)
-```
-
-```{r}
-#kmeans for indices
-set.seed(123)
-km_result_indices <- kmeans(
-  NDVI_df[, c("NDVI", "NDWI", "MNDWI", "NDBI")], 
-  centers = 25,
-  nstart = 25,
-  iter.max = 100
-)
-```
-
-```{r}
-#kmeans for bands
-set.seed(123)
-km_result_bands <- kmeans(
-  NDVI_df[, c("SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B6", "SR_B7")], 
-  centers = 25,
-  nstart = 25,
-  iter.max = 100
-)
-```
-
-```{r}
-#clusters
-NDVI_df$cluster_all     <- as.factor(km_result_all$cluster)
-NDVI_df$cluster_bands   <- as.factor(km_result_bands$cluster)
-NDVI_df$cluster_indices <- as.factor(km_result_indices$cluster)
-```
-
-
-```{r}
-ggplot(NDVI_df, aes(x = x, y = y, color = cluster_all)) +
-  geom_point(size = 0.5, alpha = 0.8) +
-  scale_color_viridis_d(name = "Cluster") +
-  labs(title = "Clustering: All Bands + Indices") +
-  theme_void() +
-  coord_equal()
-```
-
-```{r}
-ggplot(NDVI_df, aes(x = x, y = y, color = cluster_bands)) +
-  geom_point(size = 0.5, alpha = 0.8) +
-  scale_color_viridis_d(name = "Cluster") +
-  labs(title = "Clustering: All Bands + Indices") +
-  theme_void() +
-  coord_equal()
-```
-
-```{r}
-ggplot(NDVI_df, aes(x = x, y = y, color = cluster_indices)) +
-  geom_point(size = 0.5, alpha = 0.8) +
-  scale_color_viridis_d(name = "Cluster") +
-  labs(title = "Clustering: All Bands + Indices") +
-  theme_void() +
-  coord_equal()
-```
-
-```{r}
+ggplot(deviation_df, aes(x = Cluster, y = Year, fill = Deviation)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(Deviation, 3)), size = 3) +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", 
+                       midpoint = 0, name = "Deviation\nfrom Mode") +
+  labs(title = "Deviations from Mode Cluster Distribution",
+       subtitle = "Red = Over-represented, Blue = Under-represented") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
 
 ```
 
-```{r}
 
-```
 
-```{r}
-#wss <- sapply(1:50, function(k) {
-  #kmeans(scaled_features, centers = k, nstart = 25, iter.max = 100)$tot.withinss
-#})
-#plot(1:50, wss, type = "b", pch = 19,
-#     xlab = "Number of Clusters K",
-#     ylab = "Total Within-Cluster Sum of Squares")
-#NDVI_df$cluster <- as.factor(km_result$cluster)
-
-#NDVI_df %>%
-  #group_by(cluster) %>%
-  #summarise(across(c(NDVI, NDWI, MNDWI, NDBI), mean))
-```
