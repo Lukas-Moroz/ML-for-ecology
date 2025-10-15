@@ -1,0 +1,108 @@
+---
+title: "Clean Raw ARCGIS"
+author: "Sakura Takahashi"
+date: "2025-07-30"
+output: html_document
+---
+
+## THE AG LAND CODESSSSS  
+- 21: Cropland and Pasture  
+- 22: Orchards, Groves, Vineyards, Nurseries and Ornamental Horticultural Areas  
+- 23: Confined Feeding Operations  
+- 24: Other Agricultural Land  
+- 31: Herbaceous Rangeland  
+- 32: Shrub and Brush Rangeland  
+- 33: Mixed Rangeland  
+
+
+
+```{r}
+# Load packages
+library(terra)
+library(sf)       
+library(dplyr)
+library(tidyverse)
+library(here)
+
+# path to raster folder (SAKURA)
+oahu_raw_data <- "C:/Users/1saku/Downloads/low_resolution-20250731T004711Z-1-001/low_resolution/oahu"
+
+# path to LULC geojson (SAKURA)
+lulc_path <- "C:/Users/1saku/Desktop/Mega Code/SciML/land_Use_Land_Cover_(LULC).geojson"
+``` 
+
+```{r}
+# load the first raster
+first_rast <- rast(file.path(oahu_raw_data, "Oahu_2014_LS8_composite_low_resolution.tif"))
+first_df <- as.data.frame(first_rast, xy = TRUE)
+``` 
+
+```{r}
+# load geojson
+lulc <- st_read(lulc_path)
+lulc <- st_transform(lulc, crs(first_rast))
+lulc_vect <- vect(lulc)
+lulc_vect$landcover <- as.numeric(as.character(lulc_vect$landcover))
+landcover_rast <- rasterize(lulc_vect, first_rast, field = "landcover")
+
+# define ag-use landcover codes
+ag_codes <- c(21, 22, 23, 24, 31, 32, 33)
+
+# ag land use zone mask
+agriculture_mask <- classify(landcover_rast, matrix(c(-Inf, Inf, NA), ncol = 3))
+agriculture_mask[landcover_rast %in% ag_codes] <- 1
+agriculture_mask[!(landcover_rast %in% ag_codes)] <- 0
+
+# ag df
+ag_df <- as.data.frame(agriculture_mask, xy = TRUE, na.rm = TRUE)
+names(ag_df)[3] <- "agriculture"
+ag_df$agriculture <- ifelse(ag_df$agriculture == 1, "Yes", "No")
+
+# columns for specific ag land use
+ag_df$Cropland_and_Pasture <- ifelse(landcover_rast[] == 21, 1, 0)
+ag_df$Orchards_Groves_Vineyards <- ifelse(landcover_rast[] == 22, 1, 0)
+ag_df$Confined_Feeding <- ifelse(landcover_rast[] == 23, 1, 0)
+ag_df$Other_Ag_Land <- ifelse(landcover_rast[] == 24, 1, 0)
+ag_df$Herbaceous_Rangeland <- ifelse(landcover_rast[] == 31, 1, 0)
+ag_df$Shrub_Brush_Rangeland <- ifelse(landcover_rast[] == 32, 1, 0)
+ag_df$Mixed_Rangeland <- ifelse(landcover_rast[] == 33, 1, 0)
+
+```  
+
+```{r}
+# get all tif files
+tif_files <- list.files(oahu_raw_data, pattern = ".tif")
+df_list <- list()
+
+for (i in 1:length(tif_files)) {
+  f <- tif_files[i]
+  year <- substr(f, 6, 9)
+  
+  rast <- rast(file.path(oahu_raw_data, f))
+  df <- as.data.frame(rast, xy = TRUE) %>%
+    mutate(image_year = year)
+  
+  # rename bands for clarity (WESLEY)
+  df <- df %>%
+    rename(Coastal_Aerosol = SR_B1,
+           Blue = SR_B2,
+           Green = SR_B3,
+           Red = SR_B4,
+           Near_Infrared = SR_B5,
+           Shortwave_Infrared_1 = SR_B6,
+           Shortwave_Infrared_2 = SR_B7)
+
+  # join ag info
+  df <- left_join(df, ag_df, by = c("x", "y"))
+  
+  df_list[[i]] <- df
+}
+
+# export data
+all_landsat <- bind_rows(df_list)
+write.csv(all_landsat, "oahu_landsat_with_agriculture.csv", row.names = FALSE)
+table(all_landsat$agriculture)
+
+``` 
+
+
