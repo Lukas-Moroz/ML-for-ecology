@@ -1,0 +1,8 @@
+"Metric","Value"
+"Training_Accuracy",1
+"Testing_Accuracy",0.893166666666667
+"OOB_Error",0.109185714285714
+"Training_Samples",70000
+"Testing_Samples",30000
+"Number_of_Trees",500
+"Variables_per_Split",3
