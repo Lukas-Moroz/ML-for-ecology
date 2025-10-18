@@ -1,0 +1,300 @@
+# Oahu Agriculture Random Forest Classification Model
+# Using spectral bands to predict agriculture land cover
+# =====================================================
+```{r}
+# Load required libraries
+library(randomForest)
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(viridis)
+
+# Set seed for reproducibility
+set.seed(123)
+
+# =======================================================
+# 1. LOAD TRAINING AND TESTING DATA
+# =======================================================
+
+cat("Loading training and testing datasets...\n")
+
+# Load the datasets you just created
+train_data <- read.csv("oahu_agriculture_train_data.csv")
+test_data <- read.csv("oahu_agriculture_test_data.csv")
+
+cat("Training data dimensions:", dim(train_data), "\n")
+cat("Testing data dimensions:", dim(test_data), "\n")
+
+# Check the structure
+cat("\nTraining data structure:\n")
+str(train_data[, 1:10])  # Show first 10 columns
+
+# =======================================================
+# 2. DEFINE PREDICTORS AND TARGET
+# =======================================================
+
+# Define spectral bands as predictors
+spectral_bands <- c("Coastal_Aerosol", "Blue", "Green", "Red", "Near_Infrared", 
+                    "Shortwave_Infrared_1", "Shortwave_Infrared_2")
+
+# Optional: Also include spectral indices
+spectral_indices <- c("ndvi", "ndwi", "evi", "sr")
+
+# Choose your predictors (start with just spectral bands)
+predictors <- spectral_bands
+
+# Target variable
+target_variable <- "agriculture"
+
+cat("Predictors:", paste(predictors, collapse = ", "), "\n")
+cat("Target variable:", target_variable, "\n")
+
+# Ensure target is a factor
+train_data[[target_variable]] <- as.factor(train_data[[target_variable]])
+test_data[[target_variable]] <- as.factor(test_data[[target_variable]])
+
+cat("Target classes:", levels(train_data[[target_variable]]), "\n")
+cat("Training class distribution:\n")
+print(table(train_data[[target_variable]]))
+
+# =======================================================
+# 3. PREPARE DATA FOR MODELING
+# =======================================================
+
+# Check for missing values in predictors
+missing_check <- sapply(train_data[, predictors], function(x) sum(is.na(x)))
+cat("\nMissing values in predictors:\n")
+print(missing_check)
+
+# Remove any rows with missing values in predictors or target
+train_clean <- train_data %>%
+  filter(complete.cases(.[, c(predictors, target_variable)]))
+
+test_clean <- test_data %>%
+  filter(complete.cases(.[, c(predictors, target_variable)]))
+
+cat("Clean training data:", nrow(train_clean), "rows\n")
+cat("Clean testing data:", nrow(test_clean), "rows\n")
+
+# =======================================================
+# 4. TRAIN RANDOM FOREST MODEL
+# =======================================================
+
+cat("\nTraining Random Forest model...\n")
+
+# Create formula for the model
+formula_str <- paste(target_variable, "~", paste(predictors, collapse = " + "))
+rf_formula <- as.formula(formula_str)
+
+cat("Model formula:", formula_str, "\n")
+
+# Train Random Forest model
+start_time <- Sys.time()
+
+rf_model <- randomForest(
+  formula = rf_formula,
+  data = train_clean,
+  ntree = 500,                    # Number of trees
+  mtry = sqrt(length(predictors)), # Number of variables at each split
+  importance = TRUE,              # Calculate variable importance
+  proximity = FALSE,              # Don't calculate proximity (saves memory)
+  na.action = na.omit,
+  do.trace = 50                   # Print progress every 50 trees
+)
+
+end_time <- Sys.time()
+training_time <- end_time - start_time
+
+cat("Training completed in", round(as.numeric(training_time), 2), "minutes\n")
+
+# Print model summary
+print(rf_model)
+
+# =======================================================
+# 5. MODEL EVALUATION ON TRAINING DATA
+# =======================================================
+
+cat("\n=== TRAINING DATA PERFORMANCE ===\n")
+
+# Get training predictions
+train_predictions <- predict(rf_model, train_clean[, predictors])
+
+# Training confusion matrix
+train_confusion <- confusionMatrix(train_predictions, train_clean[[target_variable]])
+print(train_confusion)
+
+cat("Training Accuracy:", round(train_confusion$overall["Accuracy"] * 100, 2), "%\n")
+
+# =======================================================
+# 6. MODEL EVALUATION ON TESTING DATA
+# =======================================================
+
+cat("\n=== TESTING DATA PERFORMANCE ===\n")
+
+# Make predictions on test data
+test_predictions <- predict(rf_model, test_clean[, predictors])
+
+# Test confusion matrix
+test_confusion <- confusionMatrix(test_predictions, test_clean[[target_variable]])
+print(test_confusion)
+
+cat("Testing Accuracy:", round(test_confusion$overall["Accuracy"] * 100, 2), "%\n")
+
+# =======================================================
+# 7. VARIABLE IMPORTANCE ANALYSIS
+# =======================================================
+
+cat("\n=== VARIABLE IMPORTANCE ===\n")
+
+# Extract variable importance
+importance_scores <- importance(rf_model)
+print(importance_scores)
+
+# Create importance data frame for plotting
+importance_df <- data.frame(
+  Variable = rownames(importance_scores),
+  MeanDecreaseAccuracy = importance_scores[, "MeanDecreaseAccuracy"],
+  MeanDecreaseGini = importance_scores[, "MeanDecreaseGini"]
+) %>%
+  arrange(desc(MeanDecreaseGini))
+
+print("Variable importance ranking:")
+print(importance_df)
+
+# =======================================================
+# 8. VISUALIZATION PLOTS
+# =======================================================
+
+# Plot 1: Variable Importance
+importance_plot <- ggplot(importance_df, aes(x = reorder(Variable, MeanDecreaseGini), 
+                                             y = MeanDecreaseGini)) +
+  geom_col(fill = "steelblue", alpha = 0.8) +
+  coord_flip() +
+  labs(title = "Random Forest Variable Importance",
+       subtitle = "Oahu Agriculture Classification",
+       x = "Spectral Bands",
+       y = "Mean Decrease in Gini") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+
+print(importance_plot)
+
+# Plot 2: Error Rate by Number of Trees
+error_plot <- data.frame(
+  Trees = 1:rf_model$ntree,
+  OOB_Error = rf_model$err.rate[, "OOB"],
+  No_Error = rf_model$err.rate[, "No"],
+  Yes_Error = rf_model$err.rate[, "Yes"]
+) %>%
+  reshape2::melt(id.vars = "Trees", variable.name = "Error_Type", value.name = "Error_Rate") %>%
+  ggplot(aes(x = Trees, y = Error_Rate, color = Error_Type)) +
+  geom_line(size = 1) +
+  labs(title = "Random Forest Error Rate by Number of Trees",
+       x = "Number of Trees",
+       y = "Error Rate",
+       color = "Error Type") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+print(error_plot)
+
+# Plot 3: Prediction Distribution
+pred_plot <- data.frame(
+  Actual = test_clean[[target_variable]],
+  Predicted = test_predictions
+) %>%
+  ggplot(aes(x = Actual, fill = Predicted)) +
+  geom_bar(position = "fill") +
+  labs(title = "Prediction Accuracy by Actual Class",
+       x = "Actual Class",
+       y = "Proportion",
+       fill = "Predicted Class") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+print(pred_plot)
+
+# =======================================================
+# 9. MODEL PERFORMANCE SUMMARY
+# =======================================================
+
+cat("\n=== MODEL PERFORMANCE SUMMARY ===\n")
+cat("Model Type: Random Forest\n")
+cat("Number of trees:", rf_model$ntree, "\n")
+cat("Variables per split (mtry):", rf_model$mtry, "\n")
+cat("Training time:", round(as.numeric(training_time), 2), "minutes\n")
+cat("Training samples:", nrow(train_clean), "\n")
+cat("Testing samples:", nrow(test_clean), "\n")
+cat("\nAccuracy Results:\n")
+cat("Training Accuracy:", round(train_confusion$overall["Accuracy"] * 100, 2), "%\n")
+cat("Testing Accuracy:", round(test_confusion$overall["Accuracy"] * 100, 2), "%\n")
+cat("Out-of-Bag (OOB) Error:", round(rf_model$err.rate[rf_model$ntree, "OOB"] * 100, 2), "%\n")
+
+# Calculate precision, recall, F1 for each class
+test_stats <- test_confusion$byClass
+if (is.matrix(test_stats)) {
+  cat("\nPer-class Performance (Testing Data):\n")
+  for (i in 1:nrow(test_stats)) {
+    class_name <- rownames(test_stats)[i]
+    precision <- round(test_stats[i, "Pos Pred Value"] * 100, 2)
+    recall <- round(test_stats[i, "Sensitivity"] * 100, 2)
+    f1 <- round(test_stats[i, "F1"] * 100, 2)
+    cat(class_name, "- Precision:", precision, "%, Recall:", recall, "%, F1:", f1, "%\n")
+  }
+}
+
+# =======================================================
+# 10. SAVE MODEL AND RESULTS
+# =======================================================
+
+cat("\nSaving model and results...\n")
+
+# Save the trained model
+saveRDS(rf_model, "oahu_agriculture_rf_model.rds")
+cat("Model saved as: oahu_agriculture_rf_model.rds\n")
+
+# Save predictions
+test_results <- data.frame(
+  x = test_clean$x,
+  y = test_clean$y,
+  actual = test_clean[[target_variable]],
+  predicted = test_predictions,
+  correct = test_clean[[target_variable]] == test_predictions
+)
+
+write.csv(test_results, "oahu_agriculture_predictions.csv", row.names = FALSE)
+cat("Predictions saved as: oahu_agriculture_predictions.csv\n")
+
+# Save variable importance
+write.csv(importance_df, "oahu_agriculture_variable_importance.csv", row.names = FALSE)
+cat("Variable importance saved as: oahu_agriculture_variable_importance.csv\n")
+
+# Save model performance summary
+performance_summary <- data.frame(
+  Metric = c("Training_Accuracy", "Testing_Accuracy", "OOB_Error", "Training_Samples", 
+             "Testing_Samples", "Number_of_Trees", "Variables_per_Split"),
+  Value = c(train_confusion$overall["Accuracy"], 
+            test_confusion$overall["Accuracy"],
+            rf_model$err.rate[rf_model$ntree, "OOB"],
+            nrow(train_clean),
+            nrow(test_clean),
+            rf_model$ntree,
+            rf_model$mtry)
+)
+
+write.csv(performance_summary, "oahu_agriculture_model_performance.csv", row.names = FALSE)
+cat("Performance summary saved as: oahu_agriculture_model_performance.csv\n")
+
+# =======================================================
+# 11. HOW TO USE THE TRAINED MODEL
+# =======================================================
+
+cat("\n=== HOW TO USE YOUR TRAINED MODEL ===\n")
+cat("1. Load the model: loaded_model <- readRDS('oahu_agriculture_rf_model.rds')\n")
+cat("2. Make predictions: predictions <- predict(loaded_model, new_data[, predictors])\n")
+cat("3. Predictors needed:", paste(predictors, collapse = ", "), "\n")
+
+cat("\n=== MODEL TRAINING COMPLETE! ===\n")
+cat("Your Random Forest model is ready to use for Oahu agriculture classification.\n")
+```  
