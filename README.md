@@ -84,7 +84,7 @@ For additional visualizations and outputs, explore the `/charts` folder in this 
 ### Contributors  
 - **Sakura Takahashi** – University of Hawaiʻi at Mānoa
 - **Alana Wesly** – University of Hawaiʻi at Mānoa
-- **Lucas Moroz** – University of Hawaiʻi at Mānoa
+- **Lukas Moroz** – University of Hawaiʻi at Mānoa
 - **Madeline Berger** – University of Hawaiʻi at Mānoa
 - **Nathan Fitzpatrick** – University of Hawaiʻi at Mānoa  
 - **Dr. Jack Buckner** – Oregon State University  
