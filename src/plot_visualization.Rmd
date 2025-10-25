@@ -1,0 +1,1274 @@
+# Oahu Agriculture Random Forest Classification Model
+# Using spectral bands to predict agriculture land cover
+# =====================================================
+```{r}
+# Oahu Agriculture Random Forest Classification Model
+# Using spectral bands to predict agriculture land cover
+# =====================================================
+
+# Load required libraries
+library(randomForest)
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(viridis)
+
+# Set seed for reproducibility
+set.seed(123)
+
+# =======================================================
+# 1. LOAD TRAINING AND TESTING DATA
+# =======================================================
+
+cat("Loading training and testing datasets...\n")
+
+# Load the datasets you just created
+train_data <- read.csv("oahu_agriculture_train_data.csv")
+test_data <- read.csv("oahu_agriculture_test_data.csv")
+
+cat("Training data dimensions:", dim(train_data), "\n")
+cat("Testing data dimensions:", dim(test_data), "\n")
+
+# Check the structure
+cat("\nTraining data structure:\n")
+str(train_data[, 1:10])  # Show first 10 columns
+```  
+
+```{r}
+# =======================================================
+# 2. DEFINE PREDICTORS AND TARGET
+# =======================================================
+
+# Define spectral bands as predictors
+spectral_bands <- c("Coastal_Aerosol", "Blue", "Green", "Red", "Near_Infrared", 
+                   "Shortwave_Infrared_1", "Shortwave_Infrared_2")
+
+# Optional: Also include spectral indices
+spectral_indices <- c("ndvi", "ndwi", "evi", "sr")
+
+# Choose your predictors (start with just spectral bands)
+predictors <- spectral_bands
+
+# Target variable
+target_variable <- "agriculture"
+
+cat("Predictors:", paste(predictors, collapse = ", "), "\n")
+cat("Target variable:", target_variable, "\n")
+
+# Ensure target is a factor
+train_data[[target_variable]] <- as.factor(train_data[[target_variable]])
+test_data[[target_variable]] <- as.factor(test_data[[target_variable]])
+
+cat("Target classes:", levels(train_data[[target_variable]]), "\n")
+cat("Training class distribution:\n")
+print(table(train_data[[target_variable]]))
+```   
+
+```{r}
+# =======================================================
+# 3. PREPARE DATA FOR MODELING
+# =======================================================
+
+# Check for missing values in predictors
+missing_check <- sapply(train_data[, predictors], function(x) sum(is.na(x)))
+cat("\nMissing values in predictors:\n")
+print(missing_check)
+
+# Remove any rows with missing values in predictors or target
+train_clean <- train_data %>%
+  filter(complete.cases(.[, c(predictors, target_variable)]))
+
+test_clean <- test_data %>%
+  filter(complete.cases(.[, c(predictors, target_variable)]))
+
+cat("Clean training data:", nrow(train_clean), "rows\n")
+cat("Clean testing data:", nrow(test_clean), "rows\n")
+```  
+
+```{r}
+# =======================================================
+# 4. TRAIN RANDOM FOREST MODEL
+# =======================================================
+
+cat("\nTraining Random Forest model...\n")
+
+# Create formula for the model
+formula_str <- paste(target_variable, "~", paste(predictors, collapse = " + "))
+rf_formula <- as.formula(formula_str)
+
+cat("Model formula:", formula_str, "\n")
+
+# Train Random Forest model
+start_time <- Sys.time()
+
+rf_model <- randomForest(
+  formula = rf_formula,
+  data = train_clean,
+  ntree = 500,                    # Number of trees
+  mtry = sqrt(length(predictors)), # Number of variables at each split
+  importance = TRUE,              # Calculate variable importance
+  proximity = FALSE,              # Don't calculate proximity (saves memory)
+  na.action = na.omit,
+  do.trace = 50                   # Print progress every 50 trees
+)
+
+end_time <- Sys.time()
+training_time <- end_time - start_time
+
+cat("Training completed in", round(as.numeric(training_time), 2), "minutes\n")
+
+# Print model summary
+print(rf_model)
+```  
+
+```{r}
+# =======================================================
+# 5. MODEL EVALUATION ON TRAINING DATA
+# =======================================================
+
+cat("\n=== TRAINING DATA PERFORMANCE ===\n")
+
+# Get training predictions
+train_predictions <- predict(rf_model, train_clean[, predictors])
+
+# Training confusion matrix
+train_confusion <- confusionMatrix(train_predictions, train_clean[[target_variable]])
+print(train_confusion)
+
+cat("Training Accuracy:", round(train_confusion$overall["Accuracy"] * 100, 2), "%\n")
+```  
+
+```{r}
+# =======================================================
+# 6. MODEL EVALUATION ON TESTING DATA
+# =======================================================
+
+cat("\n=== TESTING DATA PERFORMANCE ===\n")
+
+# Make predictions on test data
+test_predictions <- predict(rf_model, test_clean[, predictors])
+
+# Test confusion matrix
+test_confusion <- confusionMatrix(test_predictions, test_clean[[target_variable]])
+print(test_confusion)
+
+cat("Testing Accuracy:", round(test_confusion$overall["Accuracy"] * 100, 2), "%\n")
+
+```  
+
+```{r}
+# =======================================================
+# 7. VARIABLE IMPORTANCE ANALYSIS
+# =======================================================
+
+cat("\n=== VARIABLE IMPORTANCE ===\n")
+
+# Extract variable importance
+importance_scores <- importance(rf_model)
+print(importance_scores)
+
+# Create importance data frame for plotting
+importance_df <- data.frame(
+  Variable = rownames(importance_scores),
+  MeanDecreaseAccuracy = importance_scores[, "MeanDecreaseAccuracy"],
+  MeanDecreaseGini = importance_scores[, "MeanDecreaseGini"]
+) %>%
+  arrange(desc(MeanDecreaseGini))
+
+print("Variable importance ranking:")
+print(importance_df)
+```  
+
+```{r}
+# =======================================================
+# 8. VISUALIZATION PLOTS
+# =======================================================
+
+# Plot 1: Variable Importance
+importance_plot <- ggplot(importance_df, aes(x = reorder(Variable, MeanDecreaseGini), 
+                                           y = MeanDecreaseGini)) +
+  geom_col(fill = "steelblue", alpha = 0.8) +
+  coord_flip() +
+  labs(title = "Random Forest Variable Importance",
+       subtitle = "Oahu Agriculture Classification",
+       x = "Spectral Bands",
+       y = "Mean Decrease in Gini") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+
+print(importance_plot)
+
+# Plot 2: Error Rate by Number of Trees
+error_plot <- data.frame(
+  Trees = 1:rf_model$ntree,
+  OOB_Error = rf_model$err.rate[, "OOB"],
+  No_Error = rf_model$err.rate[, "No"],
+  Yes_Error = rf_model$err.rate[, "Yes"]
+) %>%
+  reshape2::melt(id.vars = "Trees", variable.name = "Error_Type", value.name = "Error_Rate") %>%
+  ggplot(aes(x = Trees, y = Error_Rate, color = Error_Type)) +
+  geom_line(size = 1) +
+  labs(title = "Random Forest Error Rate by Number of Trees",
+       x = "Number of Trees",
+       y = "Error Rate",
+       color = "Error Type") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+print(error_plot)
+
+# =======================================================
+# PLOT 3: COMPREHENSIVE PREDICTION ANALYSIS PLOTS
+# =======================================================
+
+# Create comprehensive prediction analysis
+pred_data <- data.frame(
+  Actual = test_clean[[target_variable]],
+  Predicted = test_predictions,
+  Correct = test_clean[[target_variable]] == test_predictions
+)
+
+# Plot 3A: Confusion Matrix Heatmap
+confusion_matrix_data <- as.data.frame(table(pred_data$Actual, pred_data$Predicted))
+names(confusion_matrix_data) <- c("Actual", "Predicted", "Count")
+
+confusion_heatmap <- ggplot(confusion_matrix_data, aes(x = Predicted, y = Actual, fill = Count)) +
+  geom_tile(color = "white", size = 1) +
+  geom_text(aes(label = Count), color = "black", size = 12, fontface = "bold") +
+  scale_fill_gradient(low = "lightblue", high = "darkred") +
+  labs(title = "Confusion Matrix: How Well Did We Predict Each Land Type?",
+       subtitle = "Numbers show actual count of predictions",
+       x = "What the Model Predicted",
+       y = "What the Land Actually Is") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.title = element_text(face = "bold"))
+
+print(confusion_heatmap)
+
+# Plot 3B: Accuracy by Land Type (Success Rate)
+accuracy_by_class <- pred_data %>%
+  group_by(Actual) %>%
+  summarise(
+    Total_Pixels = n(),
+    Correct_Predictions = sum(Correct),
+    Accuracy_Percent = round((Correct_Predictions / Total_Pixels) * 100, 1),
+    .groups = 'drop'
+  )
+
+accuracy_plot <- ggplot(accuracy_by_class, aes(x = Actual, y = Accuracy_Percent, fill = Actual)) +
+  geom_col(alpha = 0.8, width = 0.6) +
+  geom_text(aes(label = paste0(Accuracy_Percent, "%\n(", Correct_Predictions, "/", Total_Pixels, ")")), 
+            vjust = -0.5, size = 5, fontface = "bold") +
+  scale_fill_manual(values = c("No" = "#FF6B6B", "Yes" = "#4ECDC4")) +
+  labs(title = "Model Accuracy for Each Land Type",
+       subtitle = "How often did we correctly identify each type?",
+       x = "Land Type",
+       y = "Accuracy Percentage") +
+  ylim(0, 100) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.position = "none")
+
+print(accuracy_plot)
+
+# Plot 3C: Prediction Breakdown (What did we predict for each actual type?)
+prediction_breakdown <- pred_data %>%
+  group_by(Actual, Predicted) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  group_by(Actual) %>%
+  mutate(
+    Total = sum(Count),
+    Percentage = round((Count / Total) * 100, 1)
+  )
+
+breakdown_plot <- ggplot(prediction_breakdown, aes(x = Actual, y = Percentage, fill = Predicted)) +
+  geom_col(position = "stack", alpha = 0.8) +
+  geom_text(aes(label = ifelse(Percentage > 5, paste0(Percentage, "%"), "")), 
+            position = position_stack(vjust = 0.5), 
+            color = "white", fontface = "bold", size = 4) +
+  scale_fill_manual(values = c("No" = "#ef5350", "Yes" =  "#66bb6a"), 
+                    name = "Model Predicted") +
+  labs(title = "How Well Did the Model Predict?",
+       subtitle = "For each actual land type, what did the model predict?",
+       x = "Actual Land Type",
+       y = "Percentage of Predictions") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.title = element_text(face = "bold"))
+
+print(breakdown_plot)
+
+# Plot 3D: Model Performance Summary Dashboard
+correct_total <- sum(pred_data$Correct)
+total_predictions <- nrow(pred_data)
+overall_accuracy <- round((correct_total / total_predictions) * 100, 1)
+
+# Calculate errors by type
+false_positives <- sum(pred_data$Actual == "No" & pred_data$Predicted == "Yes")
+false_negatives <- sum(pred_data$Actual == "Yes" & pred_data$Predicted == "No")
+
+summary_data <- data.frame(
+  Category = c("Correct\nPredictions", "False Positives\n(Said Ag, Not Ag)", 
+               "False Negatives\n(Said Not Ag, Is Ag)"),
+  Count = c(correct_total, false_positives, false_negatives),
+  Percentage = round(c(correct_total, false_positives, false_negatives) / total_predictions * 100, 1),
+  Color = c("Correct", "Error", "Error")
+)
+
+summary_plot <- ggplot(summary_data, aes(x = Category, y = Count, fill = Color)) +
+  geom_col(alpha = 0.8, width = 0.6) +
+  geom_text(aes(label = paste0(Count, "\n(", Percentage, "%)")), 
+            vjust = -0.5, size = 4, fontface = "bold") +
+  scale_fill_manual(values = c("Correct" = "#4ECDC4", "Error" = "#FF6B6B")) +
+  labs(title = paste0("Overall Model Performance: ", overall_accuracy, "% Accurate"),
+       subtitle = paste0("Out of ", total_predictions, " predictions on test data"),
+       x = "Prediction Type",
+       y = "Number of Pixels") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.position = "none")
+
+print(summary_plot)
+
+# Plot 3E: Spatial Distribution of Correct/Incorrect Predictions (Sample)
+if (nrow(test_clean) > 10000) {
+  spatial_sample <- test_clean %>%
+    mutate(
+      predicted = test_predictions,
+      correct = test_clean[[target_variable]] == test_predictions
+    ) %>%
+    sample_n(10000)  # Sample for visualization performance
+} else {
+  spatial_sample <- test_clean %>%
+    mutate(
+      predicted = test_predictions,
+      correct = test_clean[[target_variable]] == test_predictions
+    )
+}
+
+spatial_accuracy_plot <- ggplot(spatial_sample, aes(x = x, y = y, color = correct)) +
+  geom_point(alpha = 0.6, size = 0.5) +
+  scale_color_manual(values = c("FALSE" = "#66bb6a", "TRUE" = "#ef5350" ),
+                     labels = c("Incorrect", "Correct"),
+                     name = "Prediction") +
+  labs(title = "Where Are Our Predictions Right and Wrong?",
+       subtitle = "Spatial distribution of prediction accuracy",
+       x = "Longitude",
+       y = "Latitude") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text = element_text(size = 10),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.title = element_text(face = "bold")) +
+  coord_equal()
+
+print(spatial_accuracy_plot)
+```
+
+PPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP
+
+
+
+
+```{r}
+# =======================================================
+# 8. VISUALIZATION PLOTS
+# =======================================================
+
+# Plot 1: Variable Importance
+importance_plot <- ggplot(importance_df, aes(x = reorder(Variable, MeanDecreaseGini), 
+                                           y = MeanDecreaseGini)) +
+  geom_col(fill = "steelblue", alpha = 0.8) +
+  coord_flip() +
+  labs(title = "Random Forest Variable Importance",
+       subtitle = "Oahu Agriculture Classification",
+       x = "Spectral Bands",
+       y = "Mean Decrease in Gini") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+
+print(importance_plot)
+
+# Plot 2: Error Rate by Number of Trees
+error_plot <- data.frame(
+  Trees = 1:rf_model$ntree,
+  OOB_Error = rf_model$err.rate[, "OOB"],
+  No_Error = rf_model$err.rate[, "No"],
+  Yes_Error = rf_model$err.rate[, "Yes"]
+) %>%
+  reshape2::melt(id.vars = "Trees", variable.name = "Error_Type", value.name = "Error_Rate") %>%
+  ggplot(aes(x = Trees, y = Error_Rate, color = Error_Type)) +
+  geom_line(size = 1) +
+  labs(title = "Random Forest Error Rate by Number of Trees",
+       x = "Number of Trees",
+       y = "Error Rate",
+       color = "Error Type") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+print(error_plot)
+
+# =======================================================
+# PLOT 3: COMPREHENSIVE PREDICTION ANALYSIS PLOTS
+# =======================================================
+
+# Create comprehensive prediction analysis
+pred_data <- data.frame(
+  Actual = test_clean[[target_variable]],
+  Predicted = test_predictions,
+  Correct = test_clean[[target_variable]] == test_predictions
+)
+
+# Plot 3A: Confusion Matrix Heatmap
+confusion_matrix_data <- as.data.frame(table(pred_data$Actual, pred_data$Predicted))
+names(confusion_matrix_data) <- c("Actual", "Predicted", "Count")
+
+confusion_heatmap <- ggplot(confusion_matrix_data, aes(x = Predicted, y = Actual, fill = Count)) +
+  geom_tile(color = "white", size = 1) +
+  geom_text(aes(label = Count), color = "black", size = 12, fontface = "bold") +
+  scale_fill_gradient(low = "lightblue", high = "darkred") +
+  labs(title = "Confusion Matrix: How Well Did We Predict Each Land Type?",
+       subtitle = "Numbers show actual count of predictions",
+       x = "What the Model Predicted",
+       y = "What the Land Actually Is") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.title = element_text(face = "bold"))
+
+print(confusion_heatmap)
+
+# Plot 3B: Accuracy by Land Type (Success Rate)
+accuracy_by_class <- pred_data %>%
+  group_by(Actual) %>%
+  summarise(
+    Total_Pixels = n(),
+    Correct_Predictions = sum(Correct),
+    Accuracy_Percent = round((Correct_Predictions / Total_Pixels) * 100, 1),
+    .groups = 'drop'
+  )
+
+accuracy_plot <- ggplot(accuracy_by_class, aes(x = Actual, y = Accuracy_Percent, fill = Actual)) +
+  geom_col(alpha = 0.8, width = 0.6) +
+  geom_text(aes(label = paste0(Accuracy_Percent, "%\n(", Correct_Predictions, "/", Total_Pixels, ")")), 
+            vjust = -0.5, size = 5, fontface = "bold") +
+  scale_fill_manual(values = c("No" = "#FF6B6B", "Yes" = "#4ECDC4")) +
+  labs(title = "Model Accuracy for Each Land Type",
+       subtitle = "How often did we correctly identify each type?",
+       x = "Land Type",
+       y = "Accuracy Percentage") +
+  ylim(0, 100) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.position = "none")
+
+print(accuracy_plot)
+
+# Plot 3C: Prediction Breakdown (What did we predict for each actual type?)
+prediction_breakdown <- pred_data %>%
+  group_by(Actual, Predicted) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  group_by(Actual) %>%
+  mutate(
+    Total = sum(Count),
+    Percentage = round((Count / Total) * 100, 1)
+  )
+
+breakdown_plot <- ggplot(prediction_breakdown, aes(x = Actual, y = Percentage, fill = Predicted)) +
+  geom_col(position = "stack", alpha = 0.8) +
+  geom_text(aes(label = ifelse(Percentage > 5, paste0(Percentage, "%"), "")), 
+            position = position_stack(vjust = 0.5), 
+            color = "white", fontface = "bold", size = 4) +
+  scale_fill_manual(values = c("No" = "#ef5350", "Yes" =  "#66bb6a"), 
+                    name = "Model Predicted") +
+  labs(title = "How Well Did the Model Predict?",
+       subtitle = "For each actual land type, what did the model predict?",
+       x = "Actual Land Type",
+       y = "Percentage of Predictions") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.title = element_text(face = "bold"))
+
+print(breakdown_plot)
+
+# Plot 3D: Model Performance Summary Dashboard
+correct_total <- sum(pred_data$Correct)
+total_predictions <- nrow(pred_data)
+overall_accuracy <- round((correct_total / total_predictions) * 100, 1)
+
+# Calculate errors by type
+false_positives <- sum(pred_data$Actual == "No" & pred_data$Predicted == "Yes")
+false_negatives <- sum(pred_data$Actual == "Yes" & pred_data$Predicted == "No")
+
+summary_data <- data.frame(
+  Category = c("Correct\nPredictions", "False Positives\n(Said Ag, Not Ag)", 
+               "False Negatives\n(Said Not Ag, Is Ag)"),
+  Count = c(correct_total, false_positives, false_negatives),
+  Percentage = round(c(correct_total, false_positives, false_negatives) / total_predictions * 100, 1),
+  Color = c("Correct", "Error", "Error")
+)
+
+summary_plot <- ggplot(summary_data, aes(x = Category, y = Count, fill = Color)) +
+  geom_col(alpha = 0.8, width = 0.6) +
+  geom_text(aes(label = paste0(Count, "\n(", Percentage, "%)")), 
+            vjust = -0.5, size = 4, fontface = "bold") +
+  scale_fill_manual(values = c("Correct" = "#4ECDC4", "Error" = "#FF6B6B")) +
+  labs(title = paste0("Overall Model Performance: ", overall_accuracy, "% Accurate"),
+       subtitle = paste0("Out of ", total_predictions, " predictions on test data"),
+       x = "Prediction Type",
+       y = "Number of Pixels") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.position = "none")
+
+print(summary_plot)
+
+# Plot 3E: Spatial Distribution of Correct/Incorrect Predictions (Sample)
+if (nrow(test_clean) > 10000) {
+  spatial_sample <- test_clean %>%
+    mutate(
+      predicted = test_predictions,
+      correct = test_clean[[target_variable]] == test_predictions
+    ) %>%
+    sample_n(10000)  # Sample for visualization performance
+} else {
+  spatial_sample <- test_clean %>%
+    mutate(
+      predicted = test_predictions,
+      correct = test_clean[[target_variable]] == test_predictions
+    )
+}
+
+spatial_accuracy_plot <- ggplot(spatial_sample, aes(x = x, y = y, color = correct)) +
+  geom_point(alpha = 0.6, size = 0.5) +
+  scale_color_manual(values = c("FALSE" = "#66bb6a", "TRUE" = "#ef5350" ),
+                     labels = c("Incorrect", "Correct"),
+                     name = "Prediction") +
+  labs(title = "Where Are Our Predictions Right and Wrong?",
+       subtitle = "Spatial distribution of prediction accuracy",
+       x = "Longitude",
+       y = "Latitude") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text = element_text(size = 10),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.title = element_text(face = "bold")) +
+  coord_equal()
+
+print(spatial_accuracy_plot)
+```  
+for the spatial accuracy plot
+
+```{r}
+# =======================================================
+# 9. MODEL PERFORMANCE SUMMARY
+# =======================================================
+
+cat("\n=== MODEL PERFORMANCE SUMMARY ===\n")
+cat("Model Type: Random Forest\n")
+cat("Number of trees:", rf_model$ntree, "\n")
+cat("Variables per split (mtry):", rf_model$mtry, "\n")
+cat("Training time:", round(as.numeric(training_time), 2), "minutes\n")
+cat("Training samples:", nrow(train_clean), "\n")
+cat("Testing samples:", nrow(test_clean), "\n")
+cat("\nAccuracy Results:\n")
+cat("Training Accuracy:", round(train_confusion$overall["Accuracy"] * 100, 2), "%\n")
+cat("Testing Accuracy:", round(test_confusion$overall["Accuracy"] * 100, 2), "%\n")
+cat("Out-of-Bag (OOB) Error:", round(rf_model$err.rate[rf_model$ntree, "OOB"] * 100, 2), "%\n")
+
+# Calculate precision, recall, F1 for each class
+test_stats <- test_confusion$byClass
+if (is.matrix(test_stats)) {
+  cat("\nPer-class Performance (Testing Data):\n")
+  for (i in 1:nrow(test_stats)) {
+    class_name <- rownames(test_stats)[i]
+    precision <- round(test_stats[i, "Pos Pred Value"] * 100, 2)
+    recall <- round(test_stats[i, "Sensitivity"] * 100, 2)
+    f1 <- round(test_stats[i, "F1"] * 100, 2)
+    cat(class_name, "- Precision:", precision, "%, Recall:", recall, "%, F1:", f1, "%\n")
+  }
+}
+```   
+
+
+```{r}
+# =======================================================
+# 10. SAVE MODEL AND RESULTS
+# =======================================================
+
+cat("\nSaving model and results...\n")
+
+# Save the trained model
+saveRDS(rf_model, "oahu_agriculture_rf_model.rds")
+cat("Model saved as: oahu_agriculture_rf_model.rds\n")
+
+# Save predictions
+test_results <- data.frame(
+  x = test_clean$x,
+  y = test_clean$y,
+  actual = test_clean[[target_variable]],
+  predicted = test_predictions,
+  correct = test_clean[[target_variable]] == test_predictions
+)
+
+write.csv(test_results, "oahu_agriculture_predictions.csv", row.names = FALSE)
+cat("Predictions saved as: oahu_agriculture_predictions.csv\n")
+
+# Save variable importance
+write.csv(importance_df, "oahu_agriculture_variable_importance.csv", row.names = FALSE)
+cat("Variable importance saved as: oahu_agriculture_variable_importance.csv\n")
+
+# Save model performance summary
+performance_summary <- data.frame(
+  Metric = c("Training_Accuracy", "Testing_Accuracy", "OOB_Error", "Training_Samples", 
+            "Testing_Samples", "Number_of_Trees", "Variables_per_Split"),
+  Value = c(train_confusion$overall["Accuracy"], 
+           test_confusion$overall["Accuracy"],
+           rf_model$err.rate[rf_model$ntree, "OOB"],
+           nrow(train_clean),
+           nrow(test_clean),
+           rf_model$ntree,
+           rf_model$mtry)
+)
+
+write.csv(performance_summary, "oahu_agriculture_model_performance.csv", row.names = FALSE)
+cat("Performance summary saved as: oahu_agriculture_model_performance.csv\n")
+```  
+
+
+```{r}
+# =======================================================
+# 11. HOW TO USE THE TRAINED MODEL
+# =======================================================
+
+cat("\n=== HOW TO USE YOUR TRAINED MODEL ===\n")
+cat("1. Load the model: loaded_model <- readRDS('oahu_agriculture_rf_model.rds')\n")
+cat("2. Make predictions: predictions <- predict(loaded_model, new_data[, predictors])\n")
+cat("3. Predictors needed:", paste(predictors, collapse = ", "), "\n")
+
+cat("\n=== MODEL TRAINING COMPLETE! ===\n")
+cat("Your Random Forest model is ready to use for Oahu agriculture classification.\n") 
+
+
+
+# Oahu Agriculture Random Forest Classification Model
+# Using spectral bands to predict agriculture land cover
+# =====================================================
+
+# Load required libraries
+library(randomForest)
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(viridis)
+
+# Set seed for reproducibility
+set.seed(123)
+
+# =======================================================
+# 1. LOAD TRAINING AND TESTING DATA
+# =======================================================
+
+cat("Loading training and testing datasets...\n")
+
+# Load the datasets you just created
+train_data <- read.csv("oahu_agriculture_train_data.csv")
+test_data <- read.csv("oahu_agriculture_test_data.csv")
+
+cat("Training data dimensions:", dim(train_data), "\n")
+cat("Testing data dimensions:", dim(test_data), "\n")
+
+# Check the structure
+cat("\nTraining data structure:\n")
+str(train_data[, 1:10])  # Show first 10 columns
+
+# =======================================================
+# 2. DEFINE PREDICTORS AND TARGET
+# =======================================================
+
+# Define spectral bands as predictors
+spectral_bands <- c("Coastal_Aerosol", "Blue", "Green", "Red", "Near_Infrared", 
+                   "Shortwave_Infrared_1", "Shortwave_Infrared_2")
+
+# Optional: Also include spectral indices
+spectral_indices <- c("ndvi", "ndwi", "evi", "sr")
+
+# Choose your predictors (start with just spectral bands)
+predictors <- spectral_bands
+
+# Target variable
+target_variable <- "agriculture"
+
+cat("Predictors:", paste(predictors, collapse = ", "), "\n")
+cat("Target variable:", target_variable, "\n")
+
+# Ensure target is a factor
+train_data[[target_variable]] <- as.factor(train_data[[target_variable]])
+test_data[[target_variable]] <- as.factor(test_data[[target_variable]])
+
+cat("Target classes:", levels(train_data[[target_variable]]), "\n")
+cat("Training class distribution:\n")
+print(table(train_data[[target_variable]]))
+
+# =======================================================
+# 3. PREPARE DATA FOR MODELING
+# =======================================================
+
+# Check for missing values in predictors
+missing_check <- sapply(train_data[, predictors], function(x) sum(is.na(x)))
+cat("\nMissing values in predictors:\n")
+print(missing_check)
+
+# Remove any rows with missing values in predictors or target
+train_clean <- train_data %>%
+  filter(complete.cases(.[, c(predictors, target_variable)]))
+
+test_clean <- test_data %>%
+  filter(complete.cases(.[, c(predictors, target_variable)]))
+
+cat("Clean training data:", nrow(train_clean), "rows\n")
+cat("Clean testing data:", nrow(test_clean), "rows\n")
+
+# =======================================================
+# 4. TRAIN RANDOM FOREST MODEL
+# =======================================================
+
+cat("\nTraining Random Forest model...\n")
+
+# Create formula for the model
+formula_str <- paste(target_variable, "~", paste(predictors, collapse = " + "))
+rf_formula <- as.formula(formula_str)
+
+cat("Model formula:", formula_str, "\n")
+
+# Train Random Forest model
+start_time <- Sys.time()
+
+rf_model <- randomForest(
+  formula = rf_formula,
+  data = train_clean,
+  ntree = 500,                    # Number of trees
+  mtry = sqrt(length(predictors)), # Number of variables at each split
+  importance = TRUE,              # Calculate variable importance
+  proximity = FALSE,              # Don't calculate proximity (saves memory)
+  na.action = na.omit,
+  do.trace = 50                   # Print progress every 50 trees
+)
+
+end_time <- Sys.time()
+training_time <- end_time - start_time
+
+cat("Training completed in", round(as.numeric(training_time), 2), "minutes\n")
+
+# Print model summary
+print(rf_model)
+
+# =======================================================
+# 5. MODEL EVALUATION ON TRAINING DATA
+# =======================================================
+
+cat("\n=== TRAINING DATA PERFORMANCE ===\n")
+
+# Get training predictions
+train_predictions <- predict(rf_model, train_clean[, predictors])
+
+# Training confusion matrix
+train_confusion <- confusionMatrix(train_predictions, train_clean[[target_variable]])
+print(train_confusion)
+
+cat("Training Accuracy:", round(train_confusion$overall["Accuracy"] * 100, 2), "%\n")
+
+# =======================================================
+# 6. MODEL EVALUATION ON TESTING DATA
+# =======================================================
+
+cat("\n=== TESTING DATA PERFORMANCE ===\n")
+
+# Make predictions on test data
+test_predictions <- predict(rf_model, test_clean[, predictors])
+
+# Test confusion matrix
+test_confusion <- confusionMatrix(test_predictions, test_clean[[target_variable]])
+print(test_confusion)
+
+cat("Testing Accuracy:", round(test_confusion$overall["Accuracy"] * 100, 2), "%\n")
+
+# =======================================================
+# 7. VARIABLE IMPORTANCE ANALYSIS
+# =======================================================
+
+cat("\n=== VARIABLE IMPORTANCE ===\n")
+
+# Extract variable importance
+importance_scores <- importance(rf_model)
+print(importance_scores)
+
+# Create importance data frame for plotting
+importance_df <- data.frame(
+  Variable = rownames(importance_scores),
+  MeanDecreaseAccuracy = importance_scores[, "MeanDecreaseAccuracy"],
+  MeanDecreaseGini = importance_scores[, "MeanDecreaseGini"]
+) %>%
+  arrange(desc(MeanDecreaseGini))
+
+print("Variable importance ranking:")
+print(importance_df)
+
+# =======================================================
+# 8. VISUALIZATION PLOTS
+# =======================================================
+
+# Plot 1: Variable Importance
+importance_plot <- ggplot(importance_df, aes(x = reorder(Variable, MeanDecreaseGini), 
+                                           y = MeanDecreaseGini)) +
+  geom_col(fill = "steelblue", alpha = 0.8) +
+  coord_flip() +
+  labs(title = "Random Forest Variable Importance",
+       subtitle = "Oahu Agriculture Classification",
+       x = "Spectral Bands",
+       y = "Mean Decrease in Gini") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5))
+
+print(importance_plot)
+
+# Plot 2: Error Rate by Number of Trees
+error_plot <- data.frame(
+  Trees = 1:rf_model$ntree,
+  OOB_Error = rf_model$err.rate[, "OOB"],
+  No_Error = rf_model$err.rate[, "No"],
+  Yes_Error = rf_model$err.rate[, "Yes"]
+) %>%
+  reshape2::melt(id.vars = "Trees", variable.name = "Error_Type", value.name = "Error_Rate") %>%
+  ggplot(aes(x = Trees, y = Error_Rate, color = Error_Type)) +
+  geom_line(size = 1) +
+  labs(title = "Random Forest Error Rate by Number of Trees",
+       x = "Number of Trees",
+       y = "Error Rate",
+       color = "Error Type") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+print(error_plot)
+
+# =======================================================
+# PLOT 3: COMPREHENSIVE PREDICTION ANALYSIS PLOTS
+# =======================================================
+
+# Create comprehensive prediction analysis
+pred_data <- data.frame(
+  Actual = test_clean[[target_variable]],
+  Predicted = test_predictions,
+  Correct = test_clean[[target_variable]] == test_predictions
+)
+
+# Plot 3A: Confusion Matrix Heatmap
+confusion_matrix_data <- as.data.frame(table(pred_data$Actual, pred_data$Predicted))
+names(confusion_matrix_data) <- c("Actual", "Predicted", "Count")
+
+confusion_heatmap <- ggplot(confusion_matrix_data, aes(x = Predicted, y = Actual, fill = Count)) +
+  geom_tile(color = "white", size = 1) +
+  geom_text(aes(label = Count), color = "black", size = 12, fontface = "bold") +
+  scale_fill_gradient(low = "lightblue", high = "darkred") +
+  labs(title = "Confusion Matrix: How Well Did We Predict Each Land Type?",
+       subtitle = "Numbers show actual count of predictions",
+       x = "What the Model Predicted",
+       y = "What the Land Actually Is") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.title = element_text(face = "bold"))
+
+print(confusion_heatmap)
+
+# Plot 3B: Accuracy by Land Type (Success Rate)
+accuracy_by_class <- pred_data %>%
+  group_by(Actual) %>%
+  summarise(
+    Total_Pixels = n(),
+    Correct_Predictions = sum(Correct),
+    Accuracy_Percent = round((Correct_Predictions / Total_Pixels) * 100, 1),
+    .groups = 'drop'
+  )
+
+accuracy_plot <- ggplot(accuracy_by_class, aes(x = Actual, y = Accuracy_Percent, fill = Actual)) +
+  geom_col(alpha = 0.8, width = 0.6) +
+  geom_text(aes(label = paste0(Accuracy_Percent, "%\n(", Correct_Predictions, "/", Total_Pixels, ")")), 
+            vjust = -0.5, size = 5, fontface = "bold") +
+  scale_fill_manual(values = c("No" = "#FF6B6B", "Yes" = "#4ECDC4")) +
+  labs(title = "Model Accuracy for Each Land Type",
+       subtitle = "How often did we correctly identify each type?",
+       x = "Land Type",
+       y = "Accuracy Percentage") +
+  ylim(0, 100) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.position = "none")
+
+print(accuracy_plot)
+
+# Plot 3C: Prediction Breakdown (What did we predict for each actual type?)
+prediction_breakdown <- pred_data %>%
+  group_by(Actual, Predicted) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  group_by(Actual) %>%
+  mutate(
+    Total = sum(Count),
+    Percentage = round((Count / Total) * 100, 1)
+  )
+
+breakdown_plot <- ggplot(prediction_breakdown, aes(x = Actual, y = Percentage, fill = Predicted)) +
+  geom_col(position = "stack", alpha = 0.8) +
+  geom_text(aes(label = ifelse(Percentage > 5, paste0(Percentage, "%"), "")), 
+            position = position_stack(vjust = 0.5), 
+            color = "white", fontface = "bold", size = 4) +
+  scale_fill_manual(values = c("No" = "#FF6B6B", "Yes" = "#4ECDC4"),
+                    name = "Model Predicted") +
+  labs(title = "Where Did Our Predictions Go Wrong?",
+       subtitle = "For each actual land type, what did the model predict?",
+       x = "Actual Land Type",
+       y = "Percentage of Predictions") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text = element_text(size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.title = element_text(face = "bold"))
+
+print(breakdown_plot)
+
+# Plot 3D: Model Performance Summary Dashboard
+correct_total <- sum(pred_data$Correct)
+total_predictions <- nrow(pred_data)
+overall_accuracy <- round((correct_total / total_predictions) * 100, 1)
+
+# Calculate errors by type
+false_positives <- sum(pred_data$Actual == "No" & pred_data$Predicted == "Yes")
+false_negatives <- sum(pred_data$Actual == "Yes" & pred_data$Predicted == "No")
+
+summary_data <- data.frame(
+  Category = c("Correct\nPredictions", "False Positives\n(Said Ag, Not Ag)", 
+               "False Negatives\n(Said Not Ag, Is Ag)"),
+  Count = c(correct_total, false_positives, false_negatives),
+  Percentage = round(c(correct_total, false_positives, false_negatives) / total_predictions * 100, 1),
+  Color = c("Correct", "Error", "Error")
+)
+
+summary_plot <- ggplot(summary_data, aes(x = Category, y = Count, fill = Color)) +
+  geom_col(alpha = 0.8, width = 0.6) +
+  geom_text(aes(label = paste0(Count, "\n(", Percentage, "%)")), 
+            vjust = -0.5, size = 4, fontface = "bold") +
+  scale_fill_manual(values = c("Correct" = "#4ECDC4", "Error" = "#FF6B6B")) +
+  labs(title = paste0("Overall Model Performance: ", overall_accuracy, "% Accurate"),
+       subtitle = paste0("Out of ", total_predictions, " predictions on test data"),
+       x = "Prediction Type",
+       y = "Number of Pixels") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text.x = element_text(size = 10),
+        axis.text.y = element_text(size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.position = "none")
+
+print(summary_plot)
+
+# Plot 3E: Spatial Distribution of Correct/Incorrect Predictions (Sample)
+if (nrow(test_clean) > 10000) {
+  spatial_sample <- test_clean %>%
+    mutate(
+      predicted = test_predictions,
+      correct = test_clean[[target_variable]] == test_predictions
+    ) %>%
+    sample_n(10000)  # Sample for visualization performance
+} else {
+  spatial_sample <- test_clean %>%
+    mutate(
+      predicted = test_predictions,
+      correct = test_clean[[target_variable]] == test_predictions
+    )
+}
+
+spatial_accuracy_plot <- ggplot(spatial_sample, aes(x = x, y = y, color = correct)) +
+  geom_point(alpha = 0.6, size = 0.5) +
+  scale_color_manual(values = c("FALSE" = "#FF6B6B", "TRUE" = "#4ECDC4"),
+                     labels = c("Incorrect", "Correct"),
+                     name = "Prediction") +
+  labs(title = "Where Are Our Predictions Right and Wrong?",
+       subtitle = "Spatial distribution of prediction accuracy",
+       x = "Longitude",
+       y = "Latitude") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 12),
+        axis.text = element_text(size = 10),
+        axis.title = element_text(size = 12, face = "bold"),
+        legend.title = element_text(face = "bold")) +
+  coord_equal()
+
+# Plot 3F: Actual Agricultural Land Distribution on Oahu (No Ocean)
+cat("Creating spatial map of agricultural land distribution...\n")
+
+# Use full dataset for better spatial coverage, but filter out ocean
+# Ocean areas typically have very low or zero reflectance values
+land_data <- test_clean %>%
+  # Filter out ocean areas by removing very low reflectance values
+  filter(
+    Coastal_Aerosol > 0,    # Ocean typically has near-zero values
+    Blue > 0,
+    Green > 0,
+    Red > 0,
+    Near_Infrared > 100     # Land areas typically have higher NIR
+  ) %>%
+  # Also remove extreme outliers that might be clouds or artifacts
+  filter(
+    Coastal_Aerosol < 10000,
+    Blue < 10000,
+    Green < 10000,
+    Red < 10000,
+    Near_Infrared < 10000
+  )
+
+cat("Filtered data - Land pixels only:", nrow(land_data), "pixels\n")
+cat("Agricultural land distribution:\n")
+print(table(land_data[[target_variable]]))
+
+# Create the agricultural land use map
+ag_distribution_map <- ggplot(land_data, aes(x = x, y = y, color = agriculture)) +
+  geom_point(alpha = 0.7, size = 0.8) +
+  scale_color_manual(
+    values = c("No" = "#8B4513", "Yes" = "#228B22"),  # Brown for non-ag, Green for ag
+    labels = c("No" = "Non-Agricultural Land", "Yes" = "Agricultural Land"),
+    name = "Land Use Type"
+  ) +
+  labs(
+    title = "Agricultural vs Non-Agricultural Land Use on Oahu",
+    subtitle = "Green = Agriculture, Brown = Other Land Uses (Ocean areas excluded)",
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.title = element_text(face = "bold"),
+    legend.position = "bottom",
+    panel.grid = element_line(alpha = 0.3)
+  ) +
+  coord_equal()  # Keep proper aspect ratio for map
+
+print(ag_distribution_map)
+
+# Plot 3G: Agricultural Land Density Map
+# Create a summary of agricultural density by area
+ag_density_data <- land_data %>%
+  # Create spatial bins for density calculation
+  mutate(
+    x_bin = round(x, 3),  # Round to create spatial bins
+    y_bin = round(y, 3)
+  ) %>%
+  group_by(x_bin, y_bin) %>%
+  summarise(
+    total_pixels = n(),
+    ag_pixels = sum(agriculture == "Yes"),
+    ag_percentage = round((ag_pixels / total_pixels) * 100, 1),
+    .groups = 'drop'
+  ) %>%
+  filter(total_pixels >= 5)  # Only include bins with enough data
+
+density_map <- ggplot(ag_density_data, aes(x = x_bin, y = y_bin, fill = ag_percentage)) +
+  geom_tile() +
+  scale_fill_gradient2(
+    low = "#8B4513",      # Brown for low agriculture
+    mid = "#DAA520",      # Gold for medium
+    high = "#228B22",     # Green for high agriculture
+    midpoint = 50,
+    name = "% Agriculture",
+    labels = function(x) paste0(x, "%")
+  ) +
+  labs(
+    title = "Agricultural Land Density Across Oahu",
+    subtitle = "Percentage of agricultural land use in each area",
+    x = "Longitude",
+    y = "Latitude"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 12, face = "bold"),
+    legend.title = element_text(face = "bold"),
+    legend.position = "bottom"
+  ) +
+  coord_equal()
+
+print(density_map)
+
+# Plot 3H: Agricultural Land Statistics Summary
+ag_stats <- land_data %>%
+  summarise(
+    Total_Land_Pixels = n(),
+    Agricultural_Pixels = sum(agriculture == "Yes"),
+    Non_Agricultural_Pixels = sum(agriculture == "No"),
+    Percent_Agricultural = round((Agricultural_Pixels / Total_Land_Pixels) * 100, 1)
+  )
+
+cat("\n=== OAHU AGRICULTURAL LAND STATISTICS ===\n")
+cat("Total land pixels analyzed:", ag_stats$Total_Land_Pixels, "\n")
+cat("Agricultural pixels:", ag_stats$Agricultural_Pixels, "\n") 
+cat("Non-agricultural pixels:", ag_stats$Non_Agricultural_Pixels, "\n")
+cat("Percentage of land that is agricultural:", ag_stats$Percent_Agricultural, "%\n")
+
+# Create a simple pie chart for land use distribution
+pie_data <- data.frame(
+  Land_Type = c("Agricultural", "Non-Agricultural"),
+  Count = c(ag_stats$Agricultural_Pixels, ag_stats$Non_Agricultural_Pixels),
+  Percentage = c(ag_stats$Percent_Agricultural, 100 - ag_stats$Percent_Agricultural)
+)
+
+pie_chart <- ggplot(pie_data, aes(x = "", y = Count, fill = Land_Type)) +
+  geom_col(width = 1) +
+  coord_polar("y", start = 0) +
+  scale_fill_manual(values = c("Agricultural" = "#228B22", "Non-Agricultural" = "#8B4513")) +
+  labs(
+    title = "Oahu Land Use Distribution",
+    subtitle = paste0("Based on ", format(ag_stats$Total_Land_Pixels, big.mark = ","), " land pixels")
+  ) +
+  theme_void() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12)
+  ) +
+  geom_text(aes(label = paste0(Land_Type, "\n", Percentage, "%")), 
+            position = position_stack(vjust = 0.5),
+            color = "white", fontface = "bold", size = 4)
+
+print(pie_chart)
+
+# =======================================================
+# 9. MODEL PERFORMANCE SUMMARY
+# =======================================================
+
+cat("\n=== MODEL PERFORMANCE SUMMARY ===\n")
+cat("Model Type: Random Forest\n")
+cat("Number of trees:", rf_model$ntree, "\n")
+cat("Variables per split (mtry):", rf_model$mtry, "\n")
+cat("Training time:", round(as.numeric(training_time), 2), "minutes\n")
+cat("Training samples:", nrow(train_clean), "\n")
+cat("Testing samples:", nrow(test_clean), "\n")
+cat("\nAccuracy Results:\n")
+cat("Training Accuracy:", round(train_confusion$overall["Accuracy"] * 100, 2), "%\n")
+cat("Testing Accuracy:", round(test_confusion$overall["Accuracy"] * 100, 2), "%\n")
+cat("Out-of-Bag (OOB) Error:", round(rf_model$err.rate[rf_model$ntree, "OOB"] * 100, 2), "%\n")
+
+# Calculate precision, recall, F1 for each class
+test_stats <- test_confusion$byClass
+if (is.matrix(test_stats)) {
+  cat("\nPer-class Performance (Testing Data):\n")
+  for (i in 1:nrow(test_stats)) {
+    class_name <- rownames(test_stats)[i]
+    precision <- round(test_stats[i, "Pos Pred Value"] * 100, 2)
+    recall <- round(test_stats[i, "Sensitivity"] * 100, 2)
+    f1 <- round(test_stats[i, "F1"] * 100, 2)
+    cat(class_name, "- Precision:", precision, "%, Recall:", recall, "%, F1:", f1, "%\n")
+  }
+}
+
+# =======================================================
+# 10. SAVE MODEL AND RESULTS
+# =======================================================
+
+cat("\nSaving model and results...\n")
+
+# Save the trained model
+saveRDS(rf_model, "oahu_agriculture_rf_model.rds")
+cat("Model saved as: oahu_agriculture_rf_model.rds\n")
+
+# Save predictions
+test_results <- data.frame(
+  x = test_clean$x,
+  y = test_clean$y,
+  actual = test_clean[[target_variable]],
+  predicted = test_predictions,
+  correct = test_clean[[target_variable]] == test_predictions
+)
+
+write.csv(test_results, "oahu_agriculture_predictions.csv", row.names = FALSE)
+cat("Predictions saved as: oahu_agriculture_predictions.csv\n")
+
+# Save variable importance
+write.csv(importance_df, "oahu_agriculture_variable_importance.csv", row.names = FALSE)
+cat("Variable importance saved as: oahu_agriculture_variable_importance.csv\n")
+
+# Save model performance summary
+performance_summary <- data.frame(
+  Metric = c("Training_Accuracy", "Testing_Accuracy", "OOB_Error", "Training_Samples", 
+            "Testing_Samples", "Number_of_Trees", "Variables_per_Split"),
+  Value = c(train_confusion$overall["Accuracy"], 
+           test_confusion$overall["Accuracy"],
+           rf_model$err.rate[rf_model$ntree, "OOB"],
+           nrow(train_clean),
+           nrow(test_clean),
+           rf_model$ntree,
+           rf_model$mtry)
+)
+
+write.csv(performance_summary, "oahu_agriculture_model_performance.csv", row.names = FALSE)
+cat("Performance summary saved as: oahu_agriculture_model_performance.csv\n")
+
+# =======================================================
+# 11. HOW TO USE THE TRAINED MODEL
+# =======================================================
+
+cat("\n=== HOW TO USE YOUR TRAINED MODEL ===\n")
+cat("1. Load the model: loaded_model <- readRDS('oahu_agriculture_rf_model.rds')\n")
+cat("2. Make predictions: predictions <- predict(loaded_model, new_data[, predictors])\n")
+cat("3. Predictors needed:", paste(predictors, collapse = ", "), "\n")
+
+cat("\n=== MODEL TRAINING COMPLETE! ===\n")
+cat("Your Random Forest model is ready to use for Oahu agriculture classification.\n")
+```   
+
+
+

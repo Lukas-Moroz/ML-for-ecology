@@ -1,0 +1,481 @@
+<<<<<<< HEAD
+---
+title: "Clean Raw Landsat"
+author: "Madeline Berger"
+date: "2025-07-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# load packages 
+
+library(terra) # for rasters
+library(sf) # for vector data
+library(tidyverse)
+library(here) # I use this to easily create relative file paths
+
+# set file path to data folder 
+
+oahu_raw_data <- here("low_resolution/oahu")
+
+zoning <- here("low_resolution/honolulu_zoning")
+
+
+```
+
+Read in one raster and convert to data frame (as an example). Read in and look at zoning shapefile
+
+```{r}
+
+
+first_rast <- terra::rast(file.path(oahu_raw_data,"Oahu_2014_LS8_composite_low_resolution.tif")) #read in the tif file as a SpatRaster using terra
+
+first_rast # get summary of whats in the raster
+
+nlyr(first_rast) # there are the bands
+
+# what happens when we run as data frame
+
+
+first_df <- as.data.frame(first_rast, xy = T)
+
+#read in zoning
+
+zones_raw <- read_sf(file.path(zoning,"Zoning.shp"))
+
+# quick visualize
+library(mapview)
+
+mapview(zones_raw, zcol = "zone_class")
+
+
+```
+
+Convert shapefiles to raster using the "zones_class" 
+
+```{r}
+
+st_crs(zones_raw) #hi zone 3 
+
+# convert to match raster
+
+zones_wgs84 <- st_transform(zones_raw, crs = crs(first_rast))
+
+# create raster template from landsat raster
+r_temp <- rast(first_rast)
+
+zones_rast <- rasterize(zones_wgs84, r_temp, field = "zone_class")
+
+
+plot(zones_rast)
+
+# make sure its origin and extent are aligned with landsat rasters 
+
+
+ext_landsat <- ext(first_rast)
+ext_zones <- ext(zones_rast)
+
+origin_landsat <- origin(first_rast)
+origin_zones <- origin(zones_rast)
+
+
+res(first_rast) == res(zones_rast) # check if true
+
+# convert zones rast to df to join to land use df
+
+zones_rast_df <- as.data.frame(zones_rast, xy = T)
+
+```
+
+
+
+
+
+Loop to read in each raster and convert to data frame. The steps will:
+- run through each file and read it in as a Spat Raster
+- create a df of each
+- save each one in a list with a new column for year
+
+```{r}
+
+# list each landsat raster
+
+tif_files <- list.files(oahu_raw_data,
+                        pattern = ".tif")
+
+# create empty list
+
+df_list <- list()
+
+for (i in 1:length(tif_files)){
+  
+  # for testing
+  #i = 1
+  
+  # file name
+  f = tif_files[i]
+  
+  # get year from file name
+  year = substr(f,6,9)
+  
+  # read in raster
+  rast = terra::rast(file.path(oahu_raw_data,f))
+  
+  # convert to df, add column with year
+  
+  df <- as.data.frame(rast, xy = T) %>% mutate(image_year = rep(year, nrow(.)))
+  
+  df_with_zones <- left_join(df, zones_rast_df, by = c("x","y")) %>% 
+    filter(!is.na(zone_class))
+  
+  # save to list 
+
+  df_list[[i]] <- df_with_zones
+  
+}
+
+
+# now we have a list of dfs with band values, year and the zone it falls into for each pixel
+
+
+# for visulizaing if this work 
+df_zones_sf <- st_as_sf(df_with_zones, coords = c("x","y"))
+
+plot(df_zones_sf)
+
+```
+=======
+---
+title: "Clean Raw Landsat"
+author: "Madeline Berger"
+date: "2025-07-30"
+output: html_document
+
+updated by Alana Wesly
+07/30/2025
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# load packages 
+
+library(terra)
+library(tidyverse)
+library(here) # I use this to easily create relative file paths
+
+# added to update column names
+
+library(dplyr) # Load dplyr
+
+# set file path to data folder 
+
+oahu_raw_data <- here("low_resolution/oahu")
+
+
+```
+
+Read in one raster and convert to data frame (as an example)
+
+```{r}
+
+first_rast <- terra::rast(file.path(oahu_raw_data,"Oahu_2014_LS8_composite_low_resolution.tif")) #read in the tif file as a SpatRaster using terra
+
+first_rast # get summary of whats in the raster
+
+nlyr(first_rast) # there are the bands
+
+# what happens when we run as data frame
+
+
+first_df <- as.data.frame(first_rast, xy = T)
+
+
+```
+
+Loop to read in each raster and convert to data frame. The steps will:
+- run through each file and read it in as a Spat Raster
+- create a df of each
+- save each one in a list with a new column for year
+
+Understanding the df: x and y are the location coordinates, SR_B# is the visual band
+- Updating the df band number column names to be human readable
+
+```{r}
+
+# list each landsat raster
+
+tif_files <- list.files(oahu_raw_data,
+                        pattern = ".tif")
+
+# create empty list
+
+df_list <- list()
+
+for (i in 1:length(tif_files)){
+  
+  # for testing
+ # i = 1
+  
+  # file name
+  f = tif_files[i]
+  
+  # get year from file name
+  year = substr(f,6,9)
+  
+  # read in raster
+  rast = terra::rast(file.path(oahu_raw_data,f))
+  
+  # convert to df, add column with year
+  
+  df <- as.data.frame(rast, xy = T) %>% mutate(image_year = rep(year, nrow(.)))
+  
+  # rename band numbers to the human readable name
+  df <- df %>%
+    rename(Coastal_Aerosol = SR_B1,
+           Blue = SR_B2,
+           Green = SR_B3,
+           Red = SR_B4,
+           Near_Infrared = SR_B5,
+           Shortwave_Infrared_1= SR_B6,
+           Shortwave_Infrared_2= SR_B7)
+  
+  # save to list 
+
+  df_list[[i]] <- df
+  
+}
+
+
+# now we have a list of dfs for each year 
+
+```
+
+Adding draft clusters with k-means clustering
+
+```{r}
+
+# 
+
+```
+
+
+>>>>>>> main
+
+```{r}
+#adding NDVI variable to df, hopefully to target vegetative/agricultural land
+
+NDVI_df <- df_with_zones %>%
+  mutate(NDVI = (SR_B5 - SR_B4) / (SR_B5 + SR_B4))
+# NDWI calculation
+NDVI_df <- NDVI_df %>%
+  mutate(NDWI = (SR_B3 - SR_B5) / (SR_B3 + SR_B5))
+# MNDWI calculation
+NDVI_df <- NDVI_df %>%
+  mutate(MNDWI = (SR_B3 - SR_B6) / (SR_B3 + SR_B6))
+# NDBI calculation
+NDVI_df <- NDVI_df %>%
+  mutate(NDBI = (SR_B6 - SR_B5) / (SR_B6 + SR_B5))
+# Data is already clean
+#clean_NDVI_df <- NDVI_df %>%
+  #filter(is.finite(NDVI), NDVI >= -1, NDVI <= 1)
+```
+
+```{r}
+#visualizing high NDVI values for a specific year
+#NDVI_df_2024 <- NDVI_df %>%
+  #filter(image_year == 2024)
+ggplot(NDVI_df, mapping = aes(x = x, y = y, fill = NDVI)) + geom_tile() + scale_fill_viridis()
+
+```
+
+```{r}
+# Clone list
+df_list_with_zones <- list()
+
+for (i in seq_along(df_list)) {
+  df_list_with_zones[[i]] <- df_list[[i]] %>%
+    semi_join(df_with_zones, by = c("x", "y"))
+}
+  
+
+
+
+# Compute indices
+for (i in seq_along(df_list_with_zones)) {
+  df <- df_list_with_zones[[i]]
+  
+  df <- df %>%
+    mutate(
+      NDVI  = (Near_Infrared - Red) / (Near_Infrared + Red),
+      NDWI  = (Green - Near_Infrared) / (Green + Near_Infrared),
+      MNDWI = (Green - Shortwave_Infrared_1) / (Green + Shortwave_Infrared_1),
+      NDBI  = (Shortwave_Infrared_1 - Near_Infrared) / (Shortwave_Infrared_1 + Near_Infrared)
+    )
+  df %>%
+    filter(is.finite(NDVI), NDVI >= -1, NDVI <= 1)
+  df_list_with_zones[[i]] <- df
+}
+```
+
+
+```{r}
+#scaling
+scaled_features <- NDVI_df[, c("SR_B1", "SR_B2", "SR_B3", "SR_B4",
+                               "SR_B5", "SR_B6", "SR_B7",
+                               "NDVI", "NDWI", "MNDWI", "NDBI")] %>%
+  scale()
+```
+
+```{r}
+# Initialize the output list first
+lukas_df_list <- list()
+
+for (i in seq_along(df_list_with_zones)) {
+  
+  # Check what columns exist
+  available_cols <- names(df_list_with_zones[[i]])
+  print(paste("DataFrame", i, "columns:", paste(available_cols, collapse = ", ")))
+  
+  # Select only columns that actually exist
+  feature_cols <- intersect(c("Coastal_Aerosol", "Blue", "Green", "Red", 
+                             "Near_Infrared", "Shortwave_Infrared_1", "Shortwave_Infrared_2",
+                             "NDVI", "NDWI", "MNDWI", "NDBI"), 
+                           available_cols)
+  
+  if(length(feature_cols) > 0) {
+    # Scale the features
+    scaled_features <- df_list_with_zones[[i]][, feature_cols] %>%
+      scale()
+    
+    # Run kmeans
+    km <- kmeans(scaled_features, centers = 25, nstart = 25, iter.max = 100)
+    
+    # Add cluster to original dataframe
+    df_list_with_zones[[i]]$cluster <- as.factor(km$cluster)
+    
+    # Save to output list
+    lukas_df_list[[i]] <- df_list_with_zones[[i]]
+  }
+}
+```
+```{r}
+library(gridExtra)
+library(ggplot2)
+
+# Create individual plots for each year
+plot_list <- list()
+
+for (i in seq_along(lukas_df_list)) {
+  if (!is.null(lukas_df_list[[i]])) {
+    year_data <- lukas_df_list[[i]]
+    year <- unique(year_data$image_year)[1]  # Get the year
+    
+    plot_list[[i]] <- ggplot(year_data, aes(x = x, y = y, color = cluster)) +
+      geom_point(size = 0.3, alpha = 0.8) +
+      scale_color_viridis_d(name = "Cluster") +
+      labs(title = paste("Year", year)) +
+      theme_void() +
+      coord_equal() +
+      theme(
+        plot.title = element_text(size = 10, hjust = 0.5),
+        legend.position = "none"  # Remove individual legends
+      )
+  }
+}
+
+# Display all plots in a grid
+do.call(grid.arrange, c(plot_list, ncol = 3))
+```
+
+```{r}
+#kmeans for all
+set.seed(123)
+km_result_all <- kmeans(
+  NDVI_df[, c("SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B6", "SR_B7", "NDVI", "NDWI", "MNDWI", "NDBI")], 
+  centers = 25,
+  nstart = 25,
+  iter.max = 100
+)
+```
+
+```{r}
+#kmeans for indices
+set.seed(123)
+km_result_indices <- kmeans(
+  NDVI_df[, c("NDVI", "NDWI", "MNDWI", "NDBI")], 
+  centers = 25,
+  nstart = 25,
+  iter.max = 100
+)
+```
+
+```{r}
+#kmeans for bands
+set.seed(123)
+km_result_bands <- kmeans(
+  NDVI_df[, c("SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B6", "SR_B7")], 
+  centers = 25,
+  nstart = 25,
+  iter.max = 100
+)
+```
+
+```{r}
+#clusters
+NDVI_df$cluster_all     <- as.factor(km_result_all$cluster)
+NDVI_df$cluster_bands   <- as.factor(km_result_bands$cluster)
+NDVI_df$cluster_indices <- as.factor(km_result_indices$cluster)
+```
+
+
+```{r}
+ggplot(NDVI_df, aes(x = x, y = y, color = cluster_all)) +
+  geom_point(size = 0.5, alpha = 0.8) +
+  scale_color_viridis_d(name = "Cluster") +
+  labs(title = "Clustering: All Bands + Indices") +
+  theme_void() +
+  coord_equal()
+```
+
+```{r}
+ggplot(NDVI_df, aes(x = x, y = y, color = cluster_bands)) +
+  geom_point(size = 0.5, alpha = 0.8) +
+  scale_color_viridis_d(name = "Cluster") +
+  labs(title = "Clustering: All Bands + Indices") +
+  theme_void() +
+  coord_equal()
+```
+
+```{r}
+ggplot(NDVI_df, aes(x = x, y = y, color = cluster_indices)) +
+  geom_point(size = 0.5, alpha = 0.8) +
+  scale_color_viridis_d(name = "Cluster") +
+  labs(title = "Clustering: All Bands + Indices") +
+  theme_void() +
+  coord_equal()
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+#wss <- sapply(1:50, function(k) {
+  #kmeans(scaled_features, centers = k, nstart = 25, iter.max = 100)$tot.withinss
+#})
+#plot(1:50, wss, type = "b", pch = 19,
+#     xlab = "Number of Clusters K",
+#     ylab = "Total Within-Cluster Sum of Squares")
+#NDVI_df$cluster <- as.factor(km_result$cluster)
+
+#NDVI_df %>%
+  #group_by(cluster) %>%
+  #summarise(across(c(NDVI, NDWI, MNDWI, NDBI), mean))
+```
